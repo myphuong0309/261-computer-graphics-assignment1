@@ -1,0 +1,21 @@
+# build output
+build/
+*.o
+*.d
+
+# python virtual environment (not part of the submission)
+venv/
+
+# runtime / generated files
+imgui.ini
+report/
+__pycache__/
+
+# LaTeX build files
+*.aux
+*.log
+*.out
+*.toc
+*.fls
+*.fdb_latexmk
+
