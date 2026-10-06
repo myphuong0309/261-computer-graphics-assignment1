@@ -8,7 +8,6 @@ venv/
 
 # runtime / generated files
 imgui.ini
-report/
 __pycache__/
 
 # LaTeX build files
