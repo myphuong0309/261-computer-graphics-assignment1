@@ -26,7 +26,7 @@ No other dependency is needed.
 ```bash
 make            # build both parts            (make part1 / make part2 for one part)
 make run1       # run Part 1                  (make run2: Part 2)
-make test       # Part 1 unit tests (no GPU needed)
+make test       # unit tests of both parts (no GPU needed)
 make clean      # remove the build output of both parts
 ```
 
@@ -132,21 +132,23 @@ adapted from Part 2 (Part 2's `Mesh` stores only position + normal, so it cannot
 
 # Part 2: Visualization of Atoms and Molecules
 
-Interactive application: Bohr atomic model with orbiting electrons, and a ball-and-stick molecule viewer.
+Interactive application: Bohr atomic model with orbiting electrons, and a ball-and-stick molecule viewer
+with an editor for atom types / positions.
 
 ## Features
 
-| Feature | Status |
+| Feature | Where |
 |---|---|
-| GUI with menus/toolbars (Dear ImGui) | yes |
-| Bohr atom model - electrons in shells | yes |
-| Simple molecule viewer (H₂O, CO₂, …), atoms as colored spheres (CPK scheme), bonds as cylinders | scene implemented (`MoleculeScene`); see *Known issues* |
-| Animated electron motion along orbitals | yes |
-| Molecular vibration and rotation animation | implemented in `MoleculeScene` |
-| Phong shading with configurable light | yes |
-| Configurable camera (orbit / pan / zoom) | yes |
-| Scene graph hierarchy | yes |
-| 23 elements in the periodic table, 8 preloaded molecules, single / double / triple bonds | yes |
+| GUI with menus/toolbars (Dear ImGui) | control panel on the left |
+| Bohr atom model - electrons in shells (23 elements, H-Ca, Fe, Cu, Zn) | *View Mode ▸ Bohr Atom Model* |
+| Ball-and-stick molecules (H₂O, CO₂, NH₃, CH₄, O₂, N₂, HCl, NaCl): CPK-colored spheres, cylinder bonds, single / double / triple | *View Mode ▸ Ball-and-Stick* |
+| Configuration of atom types and positions, bonds and bond orders, automatic bond detection | *Edit atoms & bonds* |
+| Bond lengths and bond angles of the current molecule | *Geometry* |
+| Animated electron motion along the orbits | *Animate Electrons*, *Speed* |
+| Molecular vibration (symmetric stretch about the centre of mass, bonds follow the atoms) and rotation | *Molecular Vibration*, *Molecular Rotation* |
+| Phong shading with configurable light, wireframe | *Lighting*, *Wireframe (W)* |
+| Orbit / pan / zoom camera | mouse, *Camera* |
+| Screenshots | `F12` (3D view), `Shift+F12` (whole window), *Screenshot* button, `--screenshot` |
 
 ## Controls
 
@@ -156,21 +158,36 @@ Interactive application: Bohr atomic model with orbiting electrons, and a ball-a
 | Right mouse drag | pan view |
 | Scroll wheel | zoom in/out |
 | `R` | reset camera |
-| `W` | toggle wireframe flag |
+| `W` | toggle wireframe |
+| `F12` / `Shift+F12` | screenshot of the 3D view / of the whole window (`screenshot_<time>.png`) |
 | `Esc` | quit |
+
+## Command-line options (for screenshots / testing)
+
+```
+./build/molecules --element Na                                  # Bohr model of sodium
+./build/molecules --molecule CO2 --rotate                       # molecule view
+./build/molecules --molecule H2O --with-gui --editor --screenshot out.png
+./build/molecules --molecule HCl --amplitude 0.2 --time 0.0866 --screenshot stretched.png
+# --wireframe  --paused  --no-vibrate  --speed x  --time t  --yaw deg  --pitch deg  --distance d
+# --light x,y,z  --frames N   (with --screenshot the animation is frozen at --time t)
+```
 
 ## Architecture
 
 ```
 part2_molecules/
 ├── src/
-│   ├── main.cpp          application entry, render loop, GUI
-│   ├── Mesh.h/cpp        procedural mesh generation (sphere, cylinder, torus)
+│   ├── main.cpp          application entry, render loop, GUI, molecule editor, CLI
+│   ├── Mesh.h/cpp        procedural meshes (sphere, cylinder, torus): CPU data + GPU upload
 │   ├── SceneNode.h/cpp   hierarchical scene graph
-│   ├── AtomData.h/cpp    periodic table (CPK colors, radii, Bohr shells) + predefined molecules
+│   ├── AtomData.h/cpp    periodic table (mass, covalent radius, CPK color, Bohr shells), molecules, bond detection
 │   ├── BohrModel.h/cpp   Bohr atom scene builder + electron animation
-│   └── MoleculeScene.h/cpp  ball-and-stick scene + vibration/rotation
+│   ├── MoleculeScene.h/cpp  ball-and-stick scene + vibration/rotation
+│   └── Screenshot.h/cpp  PNG screenshot (stb_image_write)
 ├── shaders/phong.vert, phong.frag
+├── tests/test_part2.cpp  `make test` (no GPU needed)
+├── vendor/stb/           stb_image_write.h
 ├── tutorials/            step-by-step notes on the code
 └── Makefile
 ```
@@ -178,28 +195,17 @@ part2_molecules/
 ### Scene graph
 
 ```
-SceneNode (root)                                  MolRotNode (root, optional rotation)
+SceneNode (root)                                  MolRotNode (root, rotation about Y through the centre of mass)
 ├── SceneNode (nucleus sphere)                    ├── VibrationNode (atom 1) → SceneNode (sphere)
-├── OrbitNode (shell 1, rotating)                 ├── VibrationNode (atom 2) → SceneNode (sphere)
-│   └── SceneNode (electron sphere)               ...
-├── OrbitNode (shell 2, rotating) ...             └── SceneNode (bond cylinder, pre-oriented)
-└── SceneNode (torus ring - orbital visualization)
+├── ShellPivot (shell k, tilted about X)          ├── VibrationNode (atom 2) → SceneNode (sphere)
+│   ├── SceneNode (torus ring of radius r_k)      ...
+│   └── OrbitNode (one per electron, rotating)    └── SceneNode (bond cylinder, re-placed every frame)
+│       └── SceneNode (electron sphere)
+└── ...
 ```
 
-All objects share **two meshes** (sphere + cylinder) and only their transforms vary. MSAA 4× is enabled and shading is per-fragment Phong
-with a configurable point light.
-
-### Supported molecules
-H₂O (water), CO₂ (carbon dioxide), NH₃ (ammonia), CH₄ (methane), O₂ (oxygen), N₂ (nitrogen), HCl (hydrogen chloride), NaCl (sodium chloride).
-
-### Supported elements (Bohr model)
-H, He, Li, Be, B, C, N, O, F, Ne, Na, Mg, Al, Si, P, S, Cl, Ar, K, Ca, Fe, Cu, Zn
-
-### Known issues (state of the code at the time of writing)
-- In `main.cpp` the radio button that switches to the *Ball-and-Stick Molecule* view is commented out, so the molecule scene cannot currently be opened from the GUI.
-- The `W` key and the *Wireframe (W)* checkbox change `App::wireframe`, but that flag is not yet applied to the scene nodes, so it has no visible effect.
-
----
+The sphere and the cylinder are shared by every node; each Bohr shell has its own torus (constant tube radius, so
+the electrons are never hidden inside a ring). MSAA 4× is enabled and shading is per-fragment Phong with a configurable point light.
 
 ## Shared code (`common/`)
 

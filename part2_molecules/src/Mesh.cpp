@@ -47,11 +47,12 @@ void Mesh::destroy() {
 }
 
 // ---------------------------------------------------------------------------
-// UV Sphere
+// UV Sphere (unit radius, poles on the Z axis)
 // ---------------------------------------------------------------------------
-Mesh Mesh::makeSphere(int sectorCount, int stackCount) {
-    std::vector<Vertex>       verts;
-    std::vector<unsigned int> idxs;
+MeshData Mesh::sphereData(int sectorCount, int stackCount) {
+    MeshData d;
+    std::vector<Vertex>&       verts = d.vertices;
+    std::vector<unsigned int>& idxs  = d.indices;
 
     float sectorStep = (float)(2.0 * M_PI / sectorCount);
     float stackStep  = (float)(M_PI / stackCount);
@@ -76,29 +77,30 @@ Mesh Mesh::makeSphere(int sectorCount, int stackCount) {
         int k1 = i * (sectorCount + 1);
         int k2 = k1 + sectorCount + 1;
         for (int j = 0; j < sectorCount; ++j, ++k1, ++k2) {
-            if (i != 0) {
+            if (i != 0) {                 // the first stack touches the north pole (degenerate quad)
                 idxs.push_back(k1); idxs.push_back(k2); idxs.push_back(k1 + 1);
             }
-            if (i != stackCount - 1) {
+            if (i != stackCount - 1) {    // the last stack touches the south pole
                 idxs.push_back(k1 + 1); idxs.push_back(k2); idxs.push_back(k2 + 1);
             }
         }
     }
-    return Mesh(verts, idxs);
+    return d;
 }
 
 // ---------------------------------------------------------------------------
 // Cylinder — Y-axis aligned: axis runs from (0,-hHalf,0) to (0,+hHalf,0)
 // This matches MoleculeScene's rotation which brings Y -> bond direction.
 // ---------------------------------------------------------------------------
-Mesh Mesh::makeCylinder(int sectorCount, float radius, float height) {
-    std::vector<Vertex>       verts;
-    std::vector<unsigned int> idxs;
+MeshData Mesh::cylinderData(int sectorCount, float radius, float height) {
+    MeshData d;
+    std::vector<Vertex>&       verts = d.vertices;
+    std::vector<unsigned int>& idxs  = d.indices;
 
     float step  = (float)(2.0 * M_PI / sectorCount);
     float hHalf = height * 0.5f;
 
-    // Side vertices: circle in XZ plane, axis along Y
+    // Side vertices: circle in XZ plane, axis along Y (bottom at 2i, top at 2i+1)
     for (int i = 0; i <= sectorCount; ++i) {
         float angle = i * step;
         float cx    = radius * std::cos(angle);
@@ -112,11 +114,11 @@ Mesh Mesh::makeCylinder(int sectorCount, float radius, float height) {
         verts.push_back(vt);
     }
 
-    // Side indices
+    // Side indices: (b_i, t_i, b_i+1) and (t_i, t_i+1, b_i+1) -> counter-clockwise from outside
     for (int i = 0; i < sectorCount; ++i) {
         int k0 = i * 2;
-        idxs.push_back(k0);     idxs.push_back(k0 + 2); idxs.push_back(k0 + 1);
-        idxs.push_back(k0 + 1); idxs.push_back(k0 + 2); idxs.push_back(k0 + 3);
+        idxs.push_back(k0);     idxs.push_back(k0 + 1); idxs.push_back(k0 + 2);
+        idxs.push_back(k0 + 1); idxs.push_back(k0 + 3); idxs.push_back(k0 + 2);
     }
 
     // Cap centers (bottom -Y, top +Y)
@@ -127,6 +129,7 @@ Mesh Mesh::makeCylinder(int sectorCount, float radius, float height) {
     verts.push_back(bc);
     verts.push_back(tc);
 
+    // Cap rims get their own vertices because their normal is +-Y, not the side normal
     int capStart = (int)verts.size();
     for (int i = 0; i <= sectorCount; ++i) {
         float angle = i * step;
@@ -141,21 +144,22 @@ Mesh Mesh::makeCylinder(int sectorCount, float radius, float height) {
 
     for (int i = 0; i < sectorCount; ++i) {
         int k = capStart + i * 2;
-        // Bottom cap (winding: CCW from below = CW from outside)
-        idxs.push_back(baseCenterIdx);     idxs.push_back(k + 2); idxs.push_back(k);
-        // Top cap
-        idxs.push_back(baseCenterIdx + 1); idxs.push_back(k + 1); idxs.push_back(k + 3);
+        // Bottom cap: counter-clockwise seen from below (-Y)
+        idxs.push_back(baseCenterIdx);     idxs.push_back(k);     idxs.push_back(k + 2);
+        // Top cap: counter-clockwise seen from above (+Y)
+        idxs.push_back(baseCenterIdx + 1); idxs.push_back(k + 3); idxs.push_back(k + 1);
     }
 
-    return Mesh(verts, idxs);
+    return d;
 }
 
 // ---------------------------------------------------------------------------
-// Torus (for orbital rings)
+// Torus in the XY plane (for orbital rings)
 // ---------------------------------------------------------------------------
-Mesh Mesh::makeTorus(float majorR, float minorR, int majorSeg, int minorSeg) {
-    std::vector<Vertex>       verts;
-    std::vector<unsigned int> idxs;
+MeshData Mesh::torusData(float majorR, float minorR, int majorSeg, int minorSeg) {
+    MeshData d;
+    std::vector<Vertex>&       verts = d.vertices;
+    std::vector<unsigned int>& idxs  = d.indices;
 
     for (int i = 0; i <= majorSeg; ++i) {
         float theta = (float)(2.0 * M_PI * i / majorSeg);
@@ -186,5 +190,17 @@ Mesh Mesh::makeTorus(float majorR, float minorR, int majorSeg, int minorSeg) {
             idxs.push_back(b); idxs.push_back(b + 1); idxs.push_back(a + 1);
         }
     }
-    return Mesh(verts, idxs);
+    return d;
+}
+
+Mesh Mesh::makeSphere(int sectorCount, int stackCount) {
+    return Mesh(sphereData(sectorCount, stackCount));
+}
+
+Mesh Mesh::makeCylinder(int sectorCount, float radius, float height) {
+    return Mesh(cylinderData(sectorCount, radius, height));
+}
+
+Mesh Mesh::makeTorus(float majorR, float minorR, int majorSeg, int minorSeg) {
+    return Mesh(torusData(majorR, minorR, majorSeg, minorSeg));
 }

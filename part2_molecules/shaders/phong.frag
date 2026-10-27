@@ -40,10 +40,10 @@ void main()
     float diff    = max(dot(norm, lightDir), 0.0);
     vec3 diffuse  = light.diffuse * (diff * material.diffuse);
 
-    // Specular (Phong)
+    // Specular (Phong) - only where the light reaches the surface (N.L > 0)
     vec3 viewDir    = normalize(viewPos - FragPos);
     vec3 reflectDir = reflect(-lightDir, norm);
-    float spec      = pow(max(dot(viewDir, reflectDir), 0.0), material.shininess);
+    float spec      = diff > 0.0 ? pow(max(dot(viewDir, reflectDir), 0.0), material.shininess) : 0.0;
     vec3 specular   = light.specular * (spec * material.specular);
 
     vec3 result = ambient + diffuse + specular;

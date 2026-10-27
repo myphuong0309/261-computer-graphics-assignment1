@@ -37,6 +37,12 @@ public:
     // Called each frame with the elapsed time delta
     virtual void update(float dt) {}
 
+    // update() this node, then all its descendants (parents first)
+    void updateTree(float dt);
+
+    // Set the wireframe flag of this node and all its descendants
+    void setWireframe(bool on);
+
     // Draw this node and all children
     void draw(Shader& shader, const glm::mat4& parentTransform) const;
 

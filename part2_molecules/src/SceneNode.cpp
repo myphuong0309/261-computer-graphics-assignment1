@@ -43,6 +43,16 @@ void SceneNode::draw(Shader& shader, const glm::mat4& parentTransform) const {
         child->draw(shader, world);
 }
 
+void SceneNode::updateTree(float dt) {
+    update(dt);
+    for (auto& child : children) child->updateTree(dt);
+}
+
+void SceneNode::setWireframe(bool on) {
+    wireframe = on;
+    for (auto& child : children) child->setWireframe(on);
+}
+
 SceneNode* SceneNode::addChild(std::unique_ptr<SceneNode> child) {
     children.push_back(std::move(child));
     return children.back().get();

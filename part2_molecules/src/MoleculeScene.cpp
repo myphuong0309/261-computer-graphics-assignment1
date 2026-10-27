@@ -3,44 +3,52 @@
 // =============================================================================
 #include "MoleculeScene.h"
 #include <cmath>
+#include <algorithm>
 #include <glm/gtc/matrix_transform.hpp>
-#include <functional>
-
-#ifndef M_PI
-#define M_PI 3.14159265358979323846
-#endif
-
 
 void MoleculeScene::build(const MoleculeSpec& spec, Mesh* sphereMesh, Mesh* cylMesh) {
+    float keepAngle = root ? root->rotAngle : 0.0f;   // keep the spin when the molecule is edited
     vibNodes.clear();
+    strands.clear();
     root = std::make_unique<MolRotNode>();
-    root->rotAxis = glm::vec3(0, 1, 0);
+    root->rotAxis   = glm::vec3(0, 1, 0);
+    root->rotAngle  = keepAngle;
+    root->animating = rotating;
 
-    // Scale factor — map angstrom coordinates to ~1-3 world unit range
-    float maxR = 0.0f;
+    // Centre of mass c = sum(m_i p_i) / sum(m_i): the molecule spins and vibrates around it
+    glm::vec3 c(0.0f);
+    float totalMass = 0.0f;
+    for (const auto& a : spec.atoms) {
+        float m = AtomData::get(a.symbol).mass;
+        c += m * a.position;
+        totalMass += m;
+    }
+    centerOfMass = totalMass > 0.0f ? c / totalMass : glm::vec3(0.0f);
+
+    // Scale factor — the farthest ball surface touches the fit sphere:
+    //   s * max_i(|p_i - c| + kAtomScale * r_i) = kFitRadius
+    float extent = 0.0f;
     for (const auto& a : spec.atoms)
-        maxR = std::max(maxR, glm::length(a.position));
-    float scale = (maxR > 0.01f) ? (2.0f / maxR) : 1.0f;
+        extent = std::max(extent, glm::length(a.position - centerOfMass) + kAtomScale * AtomData::get(a.symbol).radius);
+    scale = (extent > 1e-3f) ? (kFitRadius / extent) : 1.0f;
+
+    baseFreq = spec.stretchWavenumber > 0.0f ? spec.stretchWavenumber * kHzPerWavenumber : 2.0f;
+    vibFreq  = baseFreq * vibSpeed;
 
     // Build atom nodes (with vibration)
-    std::vector<glm::vec3> worldPos;
     for (int i = 0; i < (int)spec.atoms.size(); ++i) {
         const auto& aspec = spec.atoms[i];
         const AtomInfo& info = AtomData::get(aspec.symbol);
 
-        glm::vec3 pos = aspec.position * scale;
-        worldPos.push_back(pos);
-
         auto vibNode = std::make_unique<VibrationNode>();
-        vibNode->init(pos);
-        vibNode->vibAxis = i % 3;
-        vibNode->vibFreq = 2.0f + i * 0.5f;
-        vibNode->vibAmp  = 0.05f;
+        vibNode->init((aspec.position - centerOfMass) * scale);
+        vibNode->vibFreq   = vibFreq;
+        vibNode->vibAmp    = vibAmp;
         vibNode->animating = vibrating;
 
         auto atom = std::make_unique<SceneNode>();
         atom->mesh  = sphereMesh;
-        atom->scale = glm::vec3(info.radius * 0.5f); // visual radius
+        atom->scale = glm::vec3(kAtomScale * info.radius * scale); // visual radius (unit sphere mesh)
         atom->material.ambient   = info.color * 0.25f;
         atom->material.diffuse   = info.color;
         atom->material.specular  = glm::vec3(0.6f);
@@ -51,58 +59,20 @@ void MoleculeScene::build(const MoleculeSpec& spec, Mesh* sphereMesh, Mesh* cylM
         root->addChild(std::move(vibNode));
     }
 
-    // Bond cylinders
-    static const float bondR   = 0.06f; // visual bond radius
-    static const float dblOff  = 0.09f; // offset for double bond strands
-
+    // Bond cylinders: 1, 2 or 3 parallel strands
     for (const auto& bond : spec.bonds) {
-        glm::vec3 a = worldPos[bond.a];
-        glm::vec3 b = worldPos[bond.b];
+        int n = (int)spec.atoms.size();
+        if (bond.a < 0 || bond.b < 0 || bond.a >= n || bond.b >= n || bond.a == bond.b) continue;
 
-        auto addBondCyl = [&](glm::vec3 pa, glm::vec3 pb) {
+        std::vector<float> offsets;
+        float radius;
+        if (bond.order <= 1)      { offsets = {0.0f};                            radius = kBondRadius;   }
+        else if (bond.order == 2) { offsets = {-kDoubleOffset, kDoubleOffset};    radius = kStrandRadius; }
+        else                      { offsets = {-kTripleOffset, 0.0f, kTripleOffset}; radius = kStrandRadius; }
+
+        for (float off : offsets) {
             auto bondNode = std::make_unique<SceneNode>();
             bondNode->mesh = cylMesh;
-
-            // Compute transform
-            glm::vec3 dir = pb - pa;
-            float len = glm::length(dir);
-            glm::vec3 up(0, 1, 0);
-            glm::vec3 norm = (len > 1e-6f) ? glm::normalize(dir) : up;
-            glm::vec3 axis = glm::cross(up, norm);
-            float sinA = glm::length(axis);
-            float cosA = glm::dot(up, norm);
-
-            glm::mat4 R(1.0f);
-            if (sinA > 1e-6f)
-                R = glm::rotate(glm::mat4(1.0f), std::atan2(sinA, cosA), glm::normalize(axis));
-            else if (cosA < 0.0f)
-                R = glm::rotate(glm::mat4(1.0f), (float)M_PI, glm::vec3(1,0,0));
-
-            glm::vec3 mid = (pa + pb) * 0.5f;
-
-            bondNode->position = mid;
-            // Encode rotation into rotAxis/rotAngle (approximate: use decomposition)
-            // Instead we directly bake into a transform; use position + custom mat
-            // For simplicity: use the node's rotAngle/rotAxis from R decomposition
-            // and scale Y by len, XZ by bondR
-            bondNode->scale = glm::vec3(bondR, len, bondR);
-
-            // Extract axis-angle from R
-            glm::mat4 Rmat = R;
-            float traceVal = Rmat[0][0] + Rmat[1][1] + Rmat[2][2];
-            float angle = std::acos(std::min(std::max((traceVal - 1.0f) / 2.0f, -1.0f), 1.0f));
-            if (std::abs(angle) < 1e-6f) {
-                bondNode->rotAxis  = glm::vec3(0,1,0);
-                bondNode->rotAngle = 0.0f;
-            } else {
-                float inv2s = 1.0f / (2.0f * std::sin(angle));
-                bondNode->rotAxis = glm::vec3(
-                    (Rmat[2][1] - Rmat[1][2]) * inv2s,
-                    (Rmat[0][2] - Rmat[2][0]) * inv2s,
-                    (Rmat[1][0] - Rmat[0][1]) * inv2s
-                );
-                bondNode->rotAngle = glm::degrees(angle);
-            }
 
             // Bond color: grey
             bondNode->material.ambient   = glm::vec3(0.15f);
@@ -110,35 +80,71 @@ void MoleculeScene::build(const MoleculeSpec& spec, Mesh* sphereMesh, Mesh* cylM
             bondNode->material.specular  = glm::vec3(0.4f);
             bondNode->material.shininess = 32.0f;
 
+            strands.push_back({bondNode.get(), bond.a, bond.b, off * scale, radius * scale});
             root->addChild(std::move(bondNode));
-        };
-
-        if (bond.order == 1) {
-            addBondCyl(a, b);
-        } else if (bond.order >= 2) {
-            // Two parallel strands offset perpendicular to bond
-            glm::vec3 dir = glm::normalize(b - a);
-            glm::vec3 perp = glm::normalize(glm::cross(dir, glm::vec3(0,1,0)));
-            if (glm::length(perp) < 0.01f)
-                perp = glm::normalize(glm::cross(dir, glm::vec3(1,0,0)));
-            glm::vec3 off = perp * dblOff;
-            addBondCyl(a + off, b + off);
-            addBondCyl(a - off, b - off);
-            if (bond.order == 3) {
-                // Triple: add third strand perpendicular
-                glm::vec3 perp2 = glm::normalize(glm::cross(dir, perp));
-                addBondCyl(a + perp2 * dblOff, b + perp2 * dblOff);
-            }
         }
+    }
+    placeStrands();
+}
+
+void MoleculeScene::placeCylinder(SceneNode& node, const glm::vec3& pa, const glm::vec3& pb, float radius) {
+    glm::vec3 dir = pb - pa;
+    float len = glm::length(dir);
+    node.visible = len > 1e-4f;          // two atoms on top of each other: nothing to draw
+    if (!node.visible) return;
+
+    // Rotation taking the cylinder axis Y onto the bond direction d:
+    //   axis = Y x d / |Y x d|,  angle = atan2(|Y x d|, Y . d)
+    glm::vec3 d  = dir / len;
+    glm::vec3 up(0, 1, 0);
+    glm::vec3 axis = glm::cross(up, d);
+    float sinA = glm::length(axis);
+    float cosA = glm::dot(up, d);
+
+    if (sinA > 1e-6f) {
+        node.rotAxis  = axis / sinA;
+        node.rotAngle = glm::degrees(std::atan2(sinA, cosA));
+    } else if (cosA < 0.0f) {            // d = -Y: any axis perpendicular to Y, half a turn
+        node.rotAxis  = glm::vec3(1, 0, 0);
+        node.rotAngle = 180.0f;
+    } else {                             // d = +Y: no rotation
+        node.rotAxis  = up;
+        node.rotAngle = 0.0f;
+    }
+
+    node.position = (pa + pb) * 0.5f;
+    node.scale    = glm::vec3(2.0f * radius, len, 2.0f * radius);   // mesh radius 0.5, height 1
+}
+
+void MoleculeScene::placeStrands() {
+    for (const Strand& s : strands) {
+        glm::vec3 a = vibNodes[s.a]->position;
+        glm::vec3 b = vibNodes[s.b]->position;
+
+        // Strands of a multiple bond are shifted along u = d x Z (in the screen plane of the
+        // default view), or d x X when the bond is (almost) parallel to Z
+        glm::vec3 shift(0.0f);
+        if (s.offset != 0.0f && glm::length(b - a) > 1e-6f) {
+            glm::vec3 d = glm::normalize(b - a);
+            glm::vec3 perp = glm::cross(d, glm::vec3(0, 0, 1));
+            if (glm::length(perp) < 0.1f) perp = glm::cross(d, glm::vec3(1, 0, 0));
+            shift = glm::normalize(perp) * s.offset;
+        }
+        placeCylinder(*s.node, a + shift, b + shift, s.radius);
     }
 }
 
+void MoleculeScene::setVibration(float amp, float speed) {
+    vibAmp   = amp;
+    vibSpeed = speed;
+    vibFreq  = baseFreq * speed;
+    for (auto* n : vibNodes) { n->vibAmp = amp; n->vibFreq = vibFreq; }
+}
+
 void MoleculeScene::update(float dt) {
-    std::function<void(SceneNode*, float)> walk = [&](SceneNode* node, float dt2) {
-        node->update(dt2);
-        for (auto& c : node->children) walk(c.get(), dt2);
-    };
-    if (root) walk(root.get(), dt);
+    if (!root) return;
+    root->updateTree(dt);   // rotation (root) and vibration (atom nodes)
+    placeStrands();         // bonds follow the atoms
 }
 
 void MoleculeScene::draw(Shader& shader) const {
