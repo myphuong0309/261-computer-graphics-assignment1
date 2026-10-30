@@ -24,7 +24,7 @@ struct Vertex {
 struct MeshData {
     std::vector<Vertex>       vertices;
     std::vector<unsigned int> indices;      // triangle list
-    std::vector<unsigned int> wireIndices;  // line list (pairs) - the "edges" of the shape
+    std::vector<unsigned int> wireIndices;  // line list (pairs) - every triangle edge, for wireframe
 };
 
 namespace Geometry {
@@ -65,8 +65,7 @@ void assignVertexColors(MeshData& m, ColorScheme scheme,
 // Recentres on the bounding-box centre and scales so the largest extent equals `size`.
 void normalizeToUnit(MeshData& m, float size = 1.0f);
 
-// Builds wireIndices: boundary edges + edges between non-coplanar triangles
-// (so the invisible diagonals of quads, caps and flat faces are not drawn).
+// Builds wireIndices: every edge of every triangle, once (wireframe = the triangle mesh).
 void buildWireIndices(MeshData& m);
 
 // Planar UV mapping of the XY bounding box (used by the 2D shapes).

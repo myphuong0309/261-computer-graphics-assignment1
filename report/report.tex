@@ -126,6 +126,11 @@
 % REPORT-SPECIFIC SHORTCUTS
 \newcommand{\code}[1]{\texttt{#1}}
 \newcommand{\vecc}[3]{\ensuremath{(#1,\,#2,\,#3)}}
+% Part 2 figures: the image if it exists (in images/ or next to main.tex), otherwise a framed box with its file name
+\newcommand{\pimg}[1]{%
+  \IfFileExists{images/#1}{\includegraphics[width=\linewidth]{images/#1}}{%
+  \IfFileExists{#1}{\includegraphics[width=\linewidth]{#1}}{%
+  \fbox{\parbox[c][0.4\linewidth][c]{0.9\linewidth}{\centering\scriptsize\ttfamily image not found:\\\detokenize{#1}}}}}}
 \sloppy
 \emergencystretch=3em
 \setlength{\parindent}{0pt}
@@ -181,7 +186,7 @@ FACULTY OF COMPUTER SCIENCE AND ENGINEERING
 
     & \\[0.5pt]
     \textbf{Students}: &  Lâm Mỹ Phương - 2352950\\
-    &  Lý Trần Tân -  \\
+    &  Lý Trần Tân - 2353077 \\
     \end{tabular}
 \end{table}
 
@@ -197,8 +202,7 @@ FACULTY OF COMPUTER SCIENCE AND ENGINEERING
 
 \section{Introduction}
 
-This report describes Assignment~1 of the Computer Graphics course (CO3059): \emph{2D and 3D object rendering}. Students implement two
-interactive graphical applications with modern, shader-based OpenGL:
+This report describes Assignment~1 of the Computer Graphics course (CO3059): \emph{2D and 3D object rendering}. Two interactive graphical applications are implemented with modern, shader-based OpenGL:
 \begin{itemize}
   \item \textbf{Part~1 -- Drawing Basic Shapes:} render a variety of 2D and 3D shapes (including a user-defined surface and imported models)
         with a GUI, camera control, geometric transformations and several rendering modes.
@@ -238,11 +242,16 @@ Clean, modular code
   & Section~\ref{sec:arch}\\
 \midrule
 \multicolumn{2}{@{}l}{\textit{Part 2}}\\
-GUI with menus / toolbars to toggle the features & \\
-Visualize atoms using Bohr's model: electrons as small spheres orbiting the nucleus in distinct shells & \\
-Visualize simple molecules (e.g.\ H$_2$O, CO$_2$): atoms as colored spheres, bonds as cylinders & \\
-Optional: animate electron motion along orbitals; molecular vibration or rotation & \\
-Camera control and screenshots of the molecule structures & \\
+GUI with menus / toolbars to toggle the features
+  & Section~\ref{sec:gui2}: ImGui control panel with element / molecule selection\\
+Visualize atoms using Bohr's model: electrons as small spheres orbiting the nucleus in distinct shells
+  & Section~\ref{sec:bohr}: scene-graph-driven Bohr atom with tilted orbital shells\\
+Visualize simple molecules (e.g.\ H$_2$O, CO$_2$): atoms as colored spheres, bonds as cylinders
+  & Section~\ref{sec:ballstick}: 8 predefined molecules, CPK colors, single / double / triple bonds\\
+Optional: animate electron motion along orbitals; molecular vibration or rotation
+  & Section~\ref{sec:anim2}: electron orbits, atom vibration, whole-molecule rotation\\
+Camera control and screenshots of the molecule structures
+  & Section~\ref{sec:camera} (shared orbit camera)\\
 \bottomrule
 \end{tabularx}
 \end{center}
@@ -259,22 +268,24 @@ Camera control and screenshots of the molecule structures & \\
   \item \textbf{Shared code:} the \code{Shader} and \code{Camera} classes and the ImGui / GLM libraries live in \code{common/} and are compiled by both parts.
 \end{itemize}
 
+{\setmonofont{DejaVu Sans Mono}[Scale=MatchLowercase]\small
 \begin{verbatim}
 cg/
-|-- Makefile, README.md      build both parts; overview
-|-- common/                  shared by both parts
-|   |-- src/                 Shader.h/.cpp, Camera.h/.cpp
-|   `-- vendor/              imgui, glm
-|-- part1_shapes/            Part 1
-|   |-- src/  shaders/       application source, GLSL
-|   |-- assets/              sample textures (png) and models (obj, ply)
-|   |-- vendor/stb/          stb_image.h, stb_image_write.h
-|   `-- tests/               unit tests (no GPU needed)
-|-- part2_molecules/         Part 2
-|   `-- src/  shaders/       application source, GLSL
-|-- docs/                    assignment statement
-`-- report/                  this report (.tex, .pdf) and its figures
-\end{verbatim}
+├── Makefile, README.md      build both parts; overview
+├── common/                  shared by both parts
+│   ├── src/                 Shader.h/.cpp, Camera.h/.cpp
+│   └── vendor/              imgui, glm
+├── part1_shapes/            Part 1
+│   ├── src/                 application source
+│   ├── shaders/             shapes.vert, shapes.frag
+│   ├── assets/              sample textures (png) and models (obj, ply)
+│   └── vendor/stb/          stb_image.h, stb_image_write.h
+├── part2_molecules/         Part 2
+│   ├── src/                 application source
+│   └── shaders/             phong.vert, phong.frag
+├── docs/                    assignment statement
+└── report/                  this report (.tex, .pdf) and its figures
+\end{verbatim}}
 
 Each part has its own \code{Makefile} and builds into its own \code{build/} folder; the top-level \code{Makefile} calls both.
 
@@ -286,7 +297,7 @@ sudo apt install build-essential libglfw3-dev libglew-dev    # Ubuntu / Debian
 cd cg
 make               # build both parts (or: make part1 / make part2)
 make run1          # start Part 1 (make run2: Part 2)
-make test          # Part 1 unit tests (no GPU needed)
+make test          # Part 2 unit tests (no GPU needed)
 make clean         # remove the build output of both parts
 \end{verbatim}
 Dear ImGui, GLM and the stb headers are bundled in the repository, so no other dependency has to be installed. The programs must be started from their own folder
@@ -334,7 +345,7 @@ with a GUI to choose the shape, mouse / keyboard zoom, pan and rotate, and five 
 \subsubsection{Modules}
 
 The code is split so that everything that does not need OpenGL (geometry, parsing, file loading) is
-independent of the rendering code and can be unit-tested without a window.
+independent of the rendering code.
 
 \begin{center}
 \small
@@ -444,31 +455,31 @@ is stored twice. Using indices lets the triangles of a face share the vertices o
 \toprule
 \textbf{Shape} & \textbf{Parameters} & $V$ & $I$ & $T$ & $E$ & \textbf{Defaults} ($V$/$I$/$E$)\\
 \midrule
-Triangle      & $n=3$                & $n+1$        & $3n$         & $n$      & $n$      & 4 / 9 / 3\\
-Rectangle     & ---                  & 5            & 12           & 4        & 4        & 5 / 12 / 4\\
-Pentagon      & $n=5$                & $n+1$        & $3n$         & $n$      & $n$      & 6 / 15 / 5\\
-Hexagon       & $n=6$                & $n+1$        & $3n$         & $n$      & $n$      & 7 / 18 / 6\\
-Circle        & $N$ segments         & $N+1$        & $3N$         & $N$      & $N$      & 49 / 144 / 48\\
-Ellipse       & $N$ segments         & $N+1$        & $3N$         & $N$      & $N$      & 49 / 144 / 48\\
-Trapezoid     & ---                  & 5            & 12           & 4        & 4        & 5 / 12 / 4\\
-Star          & $p$ points           & $2p+1$       & $6p$         & $2p$     & $2p$     & 11 / 30 / 10\\
-Arrow         & ---                  & 7            & 15           & 5        & 7        & 7 / 15 / 7\\
+Triangle      & $n=3$                & $n+1$        & $3n$         & $n$      & $2n$     & 4 / 9 / 6\\
+Rectangle     & ---                  & 5            & 12           & 4        & 8        & 5 / 12 / 8\\
+Pentagon      & $n=5$                & $n+1$        & $3n$         & $n$      & $2n$     & 6 / 15 / 10\\
+Hexagon       & $n=6$                & $n+1$        & $3n$         & $n$      & $2n$     & 7 / 18 / 12\\
+Circle        & $N$ segments         & $N+1$        & $3N$         & $N$      & $2N$     & 49 / 144 / 96\\
+Ellipse       & $N$ segments         & $N+1$        & $3N$         & $N$      & $2N$     & 49 / 144 / 96\\
+Trapezoid     & ---                  & 5            & 12           & 4        & 8        & 5 / 12 / 8\\
+Star          & $p$ points           & $2p+1$       & $6p$         & $2p$     & $4p$     & 11 / 30 / 20\\
+Arrow         & ---                  & 7            & 15           & 5        & 11       & 7 / 15 / 11\\
 \midrule
-Cube          & ---                  & 24           & 36           & 12       & 12       & 24 / 36 / 12\\
-Sphere        & $S$ sectors, $K$ stacks & $(S{+}1)(K{+}1)$ & $6S(K{-}1)$ & $2S(K{-}1)$ & $S(2K{-}1)$ & 1225 / 6624 / 2256\\
-Cylinder      & $N$ segments         & $4N+6$       & $12N$        & $4N$     & $3N$     & 198 / 576 / 144\\
-Cone          & $N$ segments         & $3N+4$       & $9N$         & $3N$     & $2N$     & 148 / 432 / 96\\
-Truncated cone& $N$ segments         & $4N+6$       & $12N$        & $4N$     & $3N$     & 198 / 576 / 144\\
+Cube          & ---                  & 24           & 36           & 12       & 18       & 24 / 36 / 18\\
+Sphere        & $S$ sectors, $K$ stacks & $(S{+}1)(K{+}1)$ & $6S(K{-}1)$ & $2S(K{-}1)$ & $3S(K{-}1)$ & 1225 / 6624 / 3312\\
+Cylinder      & $N$ segments         & $4N+6$       & $12N$        & $4N$     & $6N$     & 198 / 576 / 288\\
+Cone          & $N$ segments         & $3N+4$       & $9N$         & $3N$     & $3N$     & 148 / 432 / 144\\
+Truncated cone& $N$ segments         & $4N+6$       & $12N$        & $4N$     & $6N$     & 198 / 576 / 288\\
 Tetrahedron   & ---                  & 12           & 12           & 4        & 6        & 12 / 12 / 6\\
-Torus         & $M$ ring, $m$ tube   & $(M{+}1)(m{+}1)$ & $6Mm$    & $2Mm$    & $2Mm$    & 1225 / 6912 / 2304\\
-Prism         & $n$ sides            & $6n+4$       & $12n$        & $4n$     & $3n$     & 40 / 72 / 18\\
+Torus         & $M$ ring, $m$ tube   & $(M{+}1)(m{+}1)$ & $6Mm$    & $2Mm$    & $3Mm$    & 1225 / 6912 / 3456\\
+Prism         & $n$ sides            & $6n+4$       & $12n$        & $4n$     & $6n$     & 40 / 72 / 36\\
 \midrule
-Surface       & $N\times N$ cells    & $(N{+}1)^2$  & $\le 6N^2$   & $\le 2N^2$ & depends & 4225 / 24576 / 11704$^\dagger$\\
-Model         & from file            & file         & $3\sum(k_f{-}2)$ & --- & --- & see Section~\ref{sec:models}\\
+Surface       & $N\times N$ cells    & $(N{+}1)^2$  & $\le 6N^2$   & $\le 2N^2$ & $\le 3N^2{+}2N$ & 4225 / 24576 / 12416$^\dagger$\\
+Model         & from file            & file         & $3\sum(k_f{-}2)$ & --- & from file & see Section~\ref{sec:models}\\
 \bottomrule
 \end{tabular}}
 \caption{Vertex, index, triangle and edge counts. These closed forms are derived in the following subsections and
-were checked against the real generators with a program that builds each shape for many parameter values. $^\dagger$ for $f=\sin x\cos y$ on $[-3,3]^2$.}
+were checked against the real generators with a program that builds each shape for many parameter values. $^\dagger$ for $f=\sin x\cos y$ on $[-3,3]^2$, where every cell is finite.}
 \label{tab:counts}
 \end{table}
 
@@ -527,8 +538,8 @@ Vertices $0=(0,0)$, $1=(-0.5,-0.35)$, $2=(0.5,-0.35)$, $3=(0.5,0.35)$, $4=(-0.5,
 indices $(0,1,2),\ (0,2,3),\ (0,3,4),\ (0,4,1)$.
 
 \paragraph{Arrow (concave, $V=7$, $I=15$).}
-A fan from the centre would cover points outside the arrow, so the arrow is triangulated by hand. Seven shared vertices are used
---- sharing them is what makes the shaft/head seam an \emph{interior} edge in wireframe mode (Section~\ref{sec:wire}):
+A fan from the centre would cover points outside the arrow, so the arrow is triangulated by hand with seven shared vertices
+(the head reuses the two right-hand vertices of the shaft):
 \begin{center}
 \small
 \begin{tabular}{@{}c|ccccccc@{}}
@@ -654,21 +665,27 @@ $V=4n+2(n+2)=6n+4$ and $T=2n+n+n=4n$, $I=12n$.
 
 \subsubsection{Wireframe edges}\label{sec:wire}
 
-Drawing every triangle edge would show the diagonals of quads and the radial lines of the caps, while the assignment asks
-for ``only the edges of the shape''. Therefore each mesh has a separate edge list \code{wireIndices}, built once by
+In wireframe mode the object is shown as its \emph{triangle mesh}: every edge of every triangle is drawn as a line, so the
+triangulation built in the previous subsections becomes visible (the diagonal that splits each face of the cube, the radial lines of a
+fan or a cap, the quad diagonals of a sphere or torus). Each mesh keeps a separate line list \code{wireIndices}, built once by
 \code{buildWireIndices()}:
 \begin{enumerate}
-  \item Vertices with the same position (quantised to $10^{-4}$) get the same \emph{canonical id}, so duplicated vertices of a cube
-        corner or a texture seam are recognised as one point.
-  \item For every non-degenerate triangle, its face normal is computed and each of its 3 edges is recorded in a map keyed by the
-        pair of canonical ids.
-  \item An edge is emitted if it is used by only one triangle (boundary of an open shape), by more than two triangles, or if its
-        two triangles are \emph{not coplanar}: $|n_1\cdot n_2|<0.99999$.
+  \item Vertices with the same position (quantised to $10^{-4}$) get the same \emph{canonical id}, so the duplicated vertices of a cube
+        corner or of a texture seam are recognised as one point and their shared edge is drawn once, not twice.
+  \item Every non-degenerate triangle contributes its 3 edges; an edge is stored (as a pair of vertex indices for \code{GL\_LINES})
+        the first time its pair of canonical ids is met. Degenerate triangles (sphere poles, cone apex) are skipped.
 \end{enumerate}
-Consequently quad diagonals and cap radials (coplanar neighbours) disappear and only the true edges remain: a cube shows exactly
-its 12 edges, a hexagon its 6 sides, the arrow its 7 outline edges. Curved surfaces (sphere, torus, cone side) keep their
-mesh lines. The resulting counts are the $E$ column in Table~\ref{tab:counts}: e.g.\ cylinder $3N$ (two rims and $N$ vertical lines), cone $2N$,
-sphere $S(2K-1)$.
+Since a triangle mesh is drawn, $E$ follows from the triangulation; the counts are the $E$ column of Table~\ref{tab:counts}:
+\begin{itemize}
+  \item \textbf{2D fans:} $n$ boundary sides plus $n$ radial lines to the centre, $E=2n$ (star $4p$, rectangle and trapezoid 8);
+        the arrow has its 7 outline edges plus 4 interior diagonals, $E=11$.
+  \item \textbf{Cube:} 12 edges plus one diagonal per face, $E=18$; \textbf{tetrahedron:} $E=6$.
+  \item \textbf{Cylinder / truncated cone:} $N$ vertical lines, $N$ side diagonals, 2 rims of $N$ segments and $2N$ cap radials, $E=6N$;
+        \textbf{cone:} $N$ slant lines, $N$ rim segments and $N$ base radials, $E=3N$; \textbf{prism:} likewise $E=6n$.
+  \item \textbf{Sphere:} $SK$ meridian segments, $S(K-1)$ latitude segments and $S(K-2)$ quad diagonals, $E=3S(K-1)$;
+        \textbf{torus:} $3Mm$ (two grid directions and one diagonal per quad).
+  \item \textbf{Surface:} $2N(N+1)$ grid lines plus $N^2$ diagonals, $E=3N^2+2N$ when every cell is finite.
+\end{itemize}
 
 \subsubsection{Normals, colors and texture coordinates}
 
@@ -682,7 +699,6 @@ sphere $S(2K-1)$.
         cube and tetrahedron per face, 2D shapes by their bounding box.
 \end{itemize}
 
-% ------------------------------------------------------------------ 4
 \subsection{Surface $z=f(x,y)$ and Imported Models}
 
 \subsubsection{Mathematical surface}\label{sec:surface}
@@ -891,7 +907,7 @@ Arrow keys / Shift + arrows & orbit / pan\\
 
 \begin{figure}[H]
 \centering
-\begin{subfigure}{0.49\textwidth}\includegraphics[width=\linewidth]{fig_wire.png}\caption{All shapes in wireframe: only the true edges}\end{subfigure}\hfill
+\begin{subfigure}{0.49\textwidth}\includegraphics[width=\linewidth]{fig_wire.png}\caption{All shapes in wireframe: the triangle meshes}\end{subfigure}\hfill
 \begin{subfigure}{0.49\textwidth}\includegraphics[width=\linewidth]{fig_demo.png}\caption{Demo scene: a mix of render modes}\end{subfigure}
 \caption{Wireframe and mixed-mode scenes.}
 \end{figure}
@@ -903,22 +919,6 @@ Arrow keys / Shift + arrows & orbit / pan\\
 \caption{A mathematical surface and an imported model, both in Phong mode.}
 \end{figure}
 
-\subsection{Testing}
-
-\code{make test} builds \code{tests/test\_core.cpp}, which needs no GPU and checks:
-\begin{itemize}
-  \item the formula parser: precedence, right-associative power, unary minus, implicit multiplication, case-insensitivity, the \code{z=} prefix, and nine malformed
-        inputs that must be rejected;
-  \item every shape generator: all indices are in range, all normals are finite and unit length, colors are in $[0,1]$, the wire list is non-empty,
-        every triangle is wound consistently with its normal (counter-clockwise from outside), and the exact number of edges of the planar shapes and solids
-        (e.g.\ cube 12, hexagon 6, arrow 7, prism $3n$);
-  \item surface building (valid, partly non-finite, fully non-finite, syntax error, empty range);
-  \item the four sample models: loads correctly, is centred and fits a unit box, binary and ascii PLY, PLY colors preserved, missing file and unsupported extension rejected.
-\end{itemize}
-All 191\,199 checks pass. The closed-form counts of Table~\ref{tab:counts} were additionally verified against the generators by a separate program for all shapes at the defaults and for many
-parameter combinations.
-
-
 % ------------------------------------------------------------------ limitations
 \subsection{Limitations}
 
@@ -927,23 +927,1041 @@ ImGui has no native file dialog, so models and textures are chosen from the \cod
 color, so highlights depend on mesh resolution (this is intended and shown in the comparison with Phong).
 
 % ------------------------------------------------------------------ Part 2
+% ------------------------------------------------------------------ Part 2
 \section{Part 2: Visualization of Atoms and Molecules}\label{sec:part2}
 
-\subsection{Architecture and Components}
+Part~2 asks for an interactive application that (i)~visualizes atoms with Bohr's model, electrons being small spheres that revolve
+around the nucleus in distinct shells, (ii)~visualizes simple molecules with the ball-and-stick model, atoms being colored spheres
+(red oxygen, white hydrogen, black carbon) and bonds cylinders, and optionally (iii)~animates the electron motion and the vibration or
+rotation of the molecules. The grading scheme adds three concrete criteria: atoms modelled as spheres and simple molecules visualized;
+\emph{configuration of atomic types and positions}; molecule structures rendered with proper camera control, with output screenshots.
 
-\subsection{Visualizing Atoms: Bohr's Model}
+The application (\code{part2\_molecules}) is built around a scene graph of \code{SceneNode}s that share one sphere mesh, one cylinder mesh
+and one torus per Bohr shell, a single per-fragment Phong shader, and a Dear~ImGui control panel with an element selector, a molecule
+selector, a molecule editor (element and position of every atom, bonds and bond orders, automatic bond detection), a geometry read-out,
+three animations and a screenshot function. Table~\ref{tab:req2} maps each requirement to the section that describes it.
+The mathematics behind every transformation is collected in Section~\ref{sec:math2}, and the properties claimed in the text
+(electrons on their rings, bonds joining their atoms, fixed centre of mass, \ldots) are checked automatically by \code{make test}
+(Section~\ref{sec:test2}).
 
-\subsection{Visualizing Molecules: Ball-and-Stick Model}
+\begin{table}[H]
+\centering\small
+\begin{tabularx}{\textwidth}{@{}>{\raggedright\arraybackslash}p{5.6cm}X@{}}
+\toprule
+\textbf{Requirement} & \textbf{Implementation (section)}\\
+\midrule
+GUI with menus / toolbars to access and toggle the features
+  & control panel: view mode, element list, molecule list, editor, animation toggles, lighting, camera, screenshot (\ref{sec:gui2})\\
+Bohr model: electrons as small spheres orbiting the nucleus in distinct shells
+  & 23 elements, one tilted orbit plane per shell, $Z$ electron spheres (\ref{sec:bohr})\\
+Simple molecules: atoms as colored spheres, bonds as cylinders
+  & 8 molecules with experimental geometry, CPK colors, bonds of 1, 2 or 3 strands (\ref{sec:ballstick})\\
+Configuration of atomic types and positions
+  & element of the Bohr atom; molecule editor: element and position of each atom, add / remove atoms and bonds, bond orders,
+    automatic bond detection (\ref{sec:editor})\\
+Proper camera control, output screenshots
+  & orbit / pan / zoom camera with automatic framing (\ref{sec:camera2}); \code{F12}, \code{Shift+F12} and \code{--screenshot} (\ref{sec:gui2})\\
+Optional: electron motion; molecular vibration or rotation
+  & orbit animation (\ref{sec:kin}); symmetric stretching about the centre of mass; rotation about the vertical axis through the
+    centre of mass (\ref{sec:anim2})\\
+Suggestions: scene graph, transformation matrices, materials and lighting
+  & \ref{sec:arch2}, \ref{sec:math2}, \ref{sec:render2}\\
+\bottomrule
+\end{tabularx}
+\caption{Part~2 requirements and where they are met.}
+\label{tab:req2}
+\end{table}
 
-\subsection{Animation (Optional)}
+% ------------------------------------------------------------------ 2.1
+\subsection{Architecture and Components}\label{sec:arch2}
 
-\subsection{Rendering and Lighting}
+\subsubsection{Modules}
 
-\subsection{User Interface and User Instructions}
+\begin{center}
+\small
+\begin{tabularx}{\textwidth}{@{}>{\ttfamily}l X@{}}
+\toprule
+\textnormal{\textbf{File(s)}} & \textbf{Responsibility}\\
+\midrule
+main.cpp & Window (GLFW), callbacks (mouse, keyboard, resize), render loop, ImGui control panel (element list, molecule list,
+           molecule editor, geometry read-out), automatic camera framing, screenshots, command-line options.\\
+Mesh.h / .cpp & Vertex format (position + normal, 24~bytes); CPU generators \code{sphereData}, \code{cylinderData}, \code{torusData}
+           (also used by the tests) and their upload to a VAO / VBO / EBO; \code{draw()}.\\
+SceneNode.h / .cpp & Scene-graph node: local transform (TRS), \code{Material}, non-owning pointer to a shared \code{Mesh}, children owned by
+           \code{std::unique\_ptr}; recursive \code{draw()} (world = parent $\times$ local), \code{updateTree()}, \code{setWireframe()}.\\
+AtomData.h / .cpp & Table of 23 elements (symbol, name, $Z$, standard atomic weight, covalent radius, CPK color, shell occupation);
+           8 \code{MoleculeSpec}s (experimental geometry in {\AA}, bonds with their order, wavenumber of the symmetric stretch);
+           distance-based bond detection; Hill formula.\\
+BohrModel.h / .cpp & \code{BohrAtom} builder; \code{ShellPivot} (tilt of a shell) and \code{OrbitNode} (rotating pivot of one electron);
+           per-shell radii, tilts and speeds.\\
+MoleculeScene.h / .cpp & Ball-and-stick builder (centre of mass, similarity scaling); \code{VibrationNode} (symmetric stretch),
+           \code{MolRotNode} (rotation); bond cylinders re-placed every frame.\\
+Screenshot.h / .cpp & Reads the back buffer (\code{glReadPixels}) and writes a PNG with \code{stb\_image\_write}~\cite{stb}.\\
+phong.vert / .frag & GLSL 330: transformation of positions and normals; per-fragment Phong lighting.\\
+tests/test\_part2.cpp & CPU checks of the geometry, the scene graphs and the animations (\code{make test}).\\
+common/Shader, Camera & Shared shader loader and orbit camera (Section~\ref{sec:overall}).\\
+\bottomrule
+\end{tabularx}
+\end{center}
 
-\subsection{Results}
+\subsubsection{Scene graph design}
 
-\subsection{Limitations}
+The central design pattern is a \textbf{hierarchical scene graph}. Each \code{SceneNode} stores a local transform made of a position,
+a rotation (axis and angle) and a scale, an optional pointer to a shared mesh, a material and its children. Drawing is recursive: a node
+computes $M_{\text{world}}=M_{\text{parent}}\,M_{\text{local}}$, uploads the model and normal matrices and its material, issues the draw call
+and recurses into its children with $M_{\text{world}}$ (Section~\ref{sec:hier}). Moving a node therefore moves its whole subtree; this is what
+attaches an electron to its rotating orbit pivot and the atoms and bonds of a molecule to the rotating root. Animations are expressed as
+\code{update(dt)} overrides of three node types (\code{OrbitNode}, \code{VibrationNode}, \code{MolRotNode}) and are applied by one recursive
+\code{updateTree()} before drawing. Figure~\ref{fig:sg2} shows both trees.
+
+\begin{figure}[H]
+\centering
+\begin{subfigure}[t]{\textwidth}\centering
+\begin{tikzpicture}[font=\scriptsize,
+  sgn/.style={draw,rounded corners=2pt,fill=blue!6,inner sep=2.5pt,align=center},
+  sgd/.style={draw=none,fill=none,inner sep=1pt},
+  level distance=13mm,
+  level 1/.style={sibling distance=36mm},
+  level 2/.style={sibling distance=30mm},
+  edge from parent/.style={draw,-{Stealth[length=1.5mm]}}]
+\node[sgn] {root}
+  child {node[sgn] {nucleus sphere\\$S(\rho_N)$}}
+  child {node[sgn] {\code{ShellPivot} $k$\\$R_x(\tau_k)$}
+    child {node[sgn] {ring $k$ (torus $r_k$, $\rho$)}}
+    child {node[sgn] {\code{OrbitNode} $(k,e)$\\$R_z(\theta_{k,e}(t))$}
+      child {node[sgn] {electron sphere\\$T(r_k,0,0)\,S(\rho_e)$}}}
+    child {node[sgd] {$\cdots$ one per electron}}}
+  child {node[sgd] {$\cdots$ one per shell}};
+\end{tikzpicture}
+\caption{Bohr atom (\code{BohrAtom})}
+\end{subfigure}\\[6pt]
+\begin{subfigure}[t]{\textwidth}\centering
+\begin{tikzpicture}[font=\scriptsize,
+  sgn/.style={draw,rounded corners=2pt,fill=green!8,inner sep=2.5pt,align=center},
+  sgd/.style={draw=none,fill=none,inner sep=1pt},
+  level distance=13mm,
+  level 1/.style={sibling distance=37mm},
+  edge from parent/.style={draw,-{Stealth[length=1.5mm]}}]
+\node[sgn] {\code{MolRotNode} (root)\\$R_y(\omega_r t)$}
+  child {node[sgn] {\code{VibrationNode} $i$\\$T(\lambda(t)\,\mathbf x_i^0)$}
+     child {node[sgn] {atom sphere\\$S(\rho_i)$}}}
+  child {node[sgd] {$\cdots$ one per atom}}
+  child {node[sgn] {bond strand\\$T(\mathbf m)\,R(\hat{\mathbf a},\theta)\,S(2\rho_b,\ell,2\rho_b)$}}
+  child {node[sgd] {$\cdots$ 1--3 per bond}};
+\end{tikzpicture}
+\caption{Ball-and-stick molecule (\code{MoleculeScene})}
+\end{subfigure}
+\caption{Scene graphs of Part~2; each box shows the local transform of the node (notation of Sections~\ref{sec:kin}, \ref{sec:norm} and~\ref{sec:bondcyl}).}
+\label{fig:sg2}
+\end{figure}
+
+A Bohr atom with $S$ shells and $Z$ electrons has $N_{\text{nodes}}=2+2S+2Z$ nodes (root, nucleus, one pivot and one ring per shell, one
+orbit pivot and one sphere per electron): 18 for carbon, 70 for zinc. A molecule with $n$ atoms and $B_1,B_2,B_3$ single, double and triple
+bonds has $1+2n+B_1+2B_2+3B_3$ nodes. All spheres of the application share one mesh, all bonds one cylinder, and ring $k$ of every atom
+uses torus $k$; only the uniforms differ between nodes.
+
+\subsubsection{Data flow and frame loop}
+
+\begin{figure}[H]
+\centering
+\resizebox{0.96\textwidth}{!}{%
+\begin{tikzpicture}[
+  box/.style={draw,rounded corners=2pt,align=center,minimum height=9mm,minimum width=26mm,inner sep=4pt,font=\small,fill=blue!6},
+  data/.style={draw,rounded corners=2pt,align=center,minimum height=9mm,minimum width=26mm,inner sep=4pt,font=\small,fill=green!8},
+  arr/.style={-{Stealth[length=2mm]},thick},
+  lab/.style={font=\scriptsize,fill=white,inner sep=1pt}]
+  \node[box]  (main)  at (0,3)      {main.cpp\\(GLFW loop, ImGui, editor)};
+  \node[box]  (bohr)  at (-5.5,0)   {BohrAtom};
+  \node[box]  (mol)   at (5.5,0)    {MoleculeScene};
+  \node[data] (atom)  at (0,-0.8)   {AtomData /\\MoleculeData};
+  \node[box]  (sg)    at (0,-3.8)   {SceneNode\\(scene graph)};
+  \node[data] (mesh)  at (6,-3.8)   {Mesh: sphere, cylinder,\\7 tori (VAO/VBO/EBO)};
+  \node[data] (shdr)  at (6,-6.5)   {Shader\\phong.vert / .frag};
+  \node[data] (cam)   at (-6,-3.8)  {Camera\\(common)};
+  \node[data] (shot)  at (-6,-6.5)  {Screenshot\\(PNG)};
+  \draw[arr] (main) -- node[lab,pos=0.4]{element} (bohr);
+  \draw[arr] (main) -- node[lab,pos=0.4]{edited molecule} (mol);
+  \draw[arr] (atom) -- node[lab,above]{AtomInfo} (bohr);
+  \draw[arr] (atom) -- node[lab,above]{MoleculeSpec} (mol);
+  \draw[arr] (bohr) -- node[lab]{builds / updates} (sg);
+  \draw[arr] (mol) -- node[lab]{builds / updates} (sg);
+  \draw[arr] (sg) -- node[lab]{draw call} (mesh);
+  \draw[arr] (mesh) -- node[lab]{GL\_TRIANGLES} (shdr);
+  \draw[arr] (cam) -- node[lab]{view / proj} (sg);
+  \draw[arr] (shdr) -- node[lab]{back buffer} (shot);
+\end{tikzpicture}}
+\caption{Part~2 data flow. \code{main} selects either a \code{BohrAtom} or a \code{MoleculeScene} (built from the molecule being edited);
+both read \code{AtomData} and build a scene graph whose nodes share the GPU meshes.}
+\label{fig:arch2}
+\end{figure}
+
+Each frame, \code{main} (i)~polls GLFW events, (ii)~computes $\Delta t$, (iii)~rebuilds the active scene if the element or the molecule
+changed, (iv)~lets the scene update its animations, (v)~clears the framebuffer and sets the viewport to the right of the control panel,
+(vi)~uploads the view, projection and light uniforms, (vii)~draws the scene graph, (viii)~saves a screenshot of the 3D view if one was
+requested, (ix)~draws the ImGui panel (and saves a full-window screenshot if requested) and (x)~swaps the buffers.
+
+% ------------------------------------------------------------------ 2.2
+\subsection{Mathematical Foundations}\label{sec:math2}
+
+This section collects the transformations used by Part~2. Points $\mathbf p\in\mathbb R^3$ are written in homogeneous coordinates
+$(\mathbf p,1)$ and directions as $(\mathbf v,0)$, so that a translation acts on points but not on directions.
+
+\subsubsection{Local transform and axis--angle rotations}
+
+A node's local matrix is:
+\begin{gather*}
+  M_{\text{local}} = T(\mathbf t)\,R(\hat{\mathbf a},\theta)\,S(\mathbf s),\\
+  T(\mathbf t)=\begin{pmatrix} I_3 & \mathbf t\\ \mathbf 0^{T} & 1\end{pmatrix},\qquad
+  R=\begin{pmatrix} R_3 & \mathbf 0\\ \mathbf 0^{T} & 1\end{pmatrix},\qquad
+  S=\operatorname{diag}(s_x,s_y,s_z,1),
+\end{gather*}
+so that $M_{\text{local}}\mathbf p=\mathbf t+R_3\,(\mathbf s\odot\mathbf p)$: a vertex is scaled, then rotated, then translated.
+The rotation by angle $\theta$ about the unit axis $\hat{\mathbf a}$  is given by Rodrigues' formula:
+\begin{equation}
+  R_3(\hat{\mathbf a},\theta)=I+\sin\theta\,K+(1-\cos\theta)\,K^2,\qquad
+  K=[\hat{\mathbf a}]_\times=\begin{pmatrix}0&-a_z&a_y\\a_z&0&-a_x\\-a_y&a_x&0\end{pmatrix},
+  \label{eq:rodrigues}
+\end{equation}
+or, applied to a vector, $R_3\mathbf v=\mathbf v\cos\theta+(\hat{\mathbf a}\times\mathbf v)\sin\theta+\hat{\mathbf a}\,(\hat{\mathbf a}\cdot\mathbf v)(1-\cos\theta)$.
+The rotations about the coordinate axes used below are the special cases
+\begin{gather*}
+  R_x(\tau)=\begin{pmatrix}1&0&0\\0&\cos\tau&-\sin\tau\\0&\sin\tau&\cos\tau\end{pmatrix},\qquad
+  R_y(\psi)=\begin{pmatrix}\cos\psi&0&\sin\psi\\0&1&0\\-\sin\psi&0&\cos\psi\end{pmatrix},\\
+  R_z(\theta)=\begin{pmatrix}\cos\theta&-\sin\theta&0\\\sin\theta&\cos\theta&0\\0&0&1\end{pmatrix}.
+\end{gather*}
+Whith 2 facts are used: rotations are isometries ($\|R\mathbf v\|=\|\mathbf v\|$), and $R^{-1}=R^{T}$.
+
+\subsubsection{Composition along the hierarchy}\label{sec:hier}
+
+For a node $v$ whose path from the root is $v_0,v_1,\dots,v_k=v$,
+\[
+  M_{\text{world}}(v)=M_{\text{local}}(v_0)\,M_{\text{local}}(v_1)\cdots M_{\text{local}}(v_k),
+\]
+computed recursively as 
+\[M_{\text{world}}(v)=M_{\text{world}}(\text{parent}(v))\,M_{\text{local}}(v)\] 
+with $M_{\text{world}}(\text{root's parent})=I$.
+Each node costs one $4\times4$ product (and one inversion for the normal matrix). Because matrix products are associative, changing $M_{\text{local}}$ of one node changes the world matrix of exactly its subtree,
+by the same left factor: the subtree moves rigidly with its root.
+
+\subsubsection{Transforming normals}
+
+\begin{proposition}[normal matrix]\label{prop:normal}
+Let $A$ be the upper-left $3\times3$ block of an invertible model matrix $M$. If $\mathbf n$ is normal to a surface at $\mathbf p$,
+then $\mathbf n'=A^{-T}\mathbf n$ is normal to the transformed surface at $M\mathbf p$.
+\end{proposition}
+\noindent\textit{Proof.} A tangent vector is the limit of a difference of two surface points; the translation cancels in the difference,
+so tangents transform as $\mathbf t'=A\mathbf t$. Then
+$\mathbf n'^{T}\mathbf t'=(A^{-T}\mathbf n)^{T}A\mathbf t=\mathbf n^{T}A^{-1}A\,\mathbf t=\mathbf n^{T}\mathbf t=0$ for every tangent $\mathbf t$. \hfill$\square$. 
+
+The normal matrix is $(M_{\text{world}}^{-1})^{T}$ restricted to $3\times3$; for an affine $M=\bigl(\begin{smallmatrix}A&\mathbf t\\0&1\end{smallmatrix}\bigr)$: this block is exactly $A^{-T}$, since $M^{-1}=\bigl(\begin{smallmatrix}A^{-1}&-A^{-1}\mathbf t\\0&1\end{smallmatrix}\bigr)$. For a rotation $A^{-T}=A$, and for a uniform scale $A^{-T}$ is a multiple of $A$. The bond cylinders are scaled non-uniformly, $A=R_3\operatorname{diag}(2\rho,\ell,2\rho)$; their normals ($\pm\hat{\mathbf y}$ on the caps,
+$(\cos\varphi,0,\sin\varphi)$ on the side) happen to be eigenvectors of the scale, so $A\mathbf n$ and $A^{-T}\mathbf n$ point the same way.
+
+\subsubsection{Camera, view and projection}\label{sec:camera2}
+
+\paragraph{Eye position.} The shared orbit camera (Section~\ref{sec:camera}) places the eye at
+$\mathbf e=\mathbf c+d\,(\cos\varphi\cos\psi,\ \sin\varphi,\ \cos\varphi\sin\psi)$ around the target $\mathbf c$, with yaw $\psi$, pitch $\varphi$
+and distance $d$. Our Part 2 resets it to $\psi=90^\circ$, $\varphi=30^\circ$, for example, \ $\mathbf e=d\,(0,\tfrac12,\tfrac{\sqrt3}{2})$: the camera is on
+the $+Z$ side, so the world $X$ axis points to the right, $Y$ up and $Z$ towards the viewer, and the default light $(5,8,5)$ is in front
+of the scene, above and to the right.
+
+\paragraph{View matrix.} \code{lookAt} builds the orthonormal camera basis
+\[
+  \mathbf f=\frac{\mathbf c-\mathbf e}{\|\mathbf c-\mathbf e\|},\qquad
+  \mathbf r=\frac{\mathbf f\times\hat{\mathbf y}}{\|\mathbf f\times\hat{\mathbf y}\|},\qquad
+  \mathbf u=\mathbf r\times\mathbf f,
+  \qquad
+  V=\begin{pmatrix}
+    \mathbf r^{T} & -\mathbf r\cdot\mathbf e\\
+    \mathbf u^{T} & -\mathbf u\cdot\mathbf e\\
+    -\mathbf f^{T} & \mathbf f\cdot\mathbf e\\
+    \mathbf 0^{T} & 1
+  \end{pmatrix},
+\]
+which maps the eye to the origin and the viewing direction to $-Z$. The basis is undefined when $\mathbf f\parallel\hat{\mathbf y}$
+($\mathbf f\times\hat{\mathbf y}=\mathbf 0$); this is why the pitch is clamped to $[-89^\circ,89^\circ]$.
+
+\paragraph{Projection and viewport.} With vertical field of view $\alpha$ ($45^\circ$), aspect ratio $a$, near $n=0.1$ and far $f=100$,
+\[
+  P=\begin{pmatrix}
+    \frac{1}{a\tan(\alpha/2)}&0&0&0\\
+    0&\frac{1}{\tan(\alpha/2)}&0&0\\
+    0&0&-\frac{f+n}{f-n}&-\frac{2fn}{f-n}\\
+    0&0&-1&0
+  \end{pmatrix},
+\]
+\[
+  \mathbf p_{\text{clip}}=P\,V\,M_{\text{world}}\,(\mathbf p,1)^{T},\qquad
+  \mathbf p_{\text{ndc}}=\mathbf p_{\text{clip}}/w_{\text{clip}},\qquad w_{\text{clip}}=-z_{\text{eye}}.
+\]
+The depth $z_{\text{ndc}}=\frac{f+n}{f-n}+\frac{2fn}{(f-n)\,z_{\text{eye}}}$ is hyperbolic in $z_{\text{eye}}$, so the depth precision is
+concentrated near the near plane.
+Our control panel covers the left $330$~px of the window, so the scene is drawn in the viewport $x\in[330,W)$ with
+$a=(W-330)/H$; using the aspect of the viewport (not of the window) keeps circles circular.
+
+\paragraph{Automatic framing.}
+\begin{proposition}\label{prop:fit}
+A sphere of radius $R$ centred on the viewing axis at distance $d$ lies inside the view cone of half-angle $\alpha/2$ if and only if
+$d\sin(\alpha/2)\ge R$.
+\end{proposition}
+\noindent\textit{Proof.} The distance from the centre of the sphere to a generator line of the cone is the leg opposite to the angle $\alpha/2$
+in the right triangle whose hypotenuse is the segment of length $d$ from the eye to the centre, i.e.\ $d\sin(\alpha/2)$. The sphere is inside
+the cone iff this distance is at least $R$. \hfill$\square$
+
+Since $a\ge1$, the vertical half-angle is the binding one. When a scene is built or the view is reset, the camera distance is set to
+$d=1.25\,R/\sin(\alpha/2)$ (25\,\% margin), with $R=r_{\text{outer}}+\rho_e$ for an atom (outermost shell plus electron radius) and
+$R=R_{\text{fit}}=2.2$ for a molecule (as in Section~\ref{sec:norm}): $d=4.25$ (H), $7.19$ (C), $10.78$ (Na), $15.03$ (Ca) and $7.19$ for every molecule.
+
+
+\subsubsection{Phong lighting per fragment}\label{sec:phong2}
+
+Every fragment is lit with the Phong model of Section~\ref{sec:phong}, with the light and material colors of the node:
+\begin{equation}
+  C=L_a\odot m_a+L_d\odot m_d\,\max(N\!\cdot\!L,0)+[N\!\cdot\!L>0]\;L_s\odot m_s\,\max(R\!\cdot\!V,0)^{\,n},
+  \label{eq:phong2}
+\end{equation}
+with $R=2(N\cdot L)N-L$ (by GLSL \code{reflect(-L, N)}) and $[\,\cdot\,]$ equal to 1 if the condition holds and 0 otherwise.
+
+(1)~The normal interpolated across a triangle is shorter than one: for unit $\mathbf a,\mathbf b$:
+\[\|(1-t)\mathbf a+t\mathbf b\|^2=1-2t(1-t)(1-\mathbf a\cdot\mathbf b)<1\]
+so the fragment shader renormalises it.
+
+(2)~The indicator $[N\cdot L>0]$: when the light is behind the surface, $R\cdot N=N\cdot L<0$ so $R$ points into the surface, yet
+$R\cdot V$ can still be positive at grazing viewing angles, which produced highlights on the dark side, the specular term is now
+evaluated only where the diffuse term is non-zero.
+
+% ------------------------------------------------------------------ 2.3
+\subsection{Visualizing Atoms: Bohr's Model}\label{sec:bohr}
+
+\subsubsection{Physical model and brief physical mechanism}\label{sec:bohrphys}
+
+In Bohr's model (1913)~\cite{bohr,bohrwiki} an electron of mass $m_e$ moves on a circle of radius $r$ around a nucleus of charge $Ze$, the Coulomb
+attraction providing the centripetal force, and its angular momentum is quantised:
+\[
+  \frac{Ze^2}{4\pi\varepsilon_0 r^2}=\frac{m_e v^2}{r},\qquad L=m_e v r=n\hbar,\quad n=1,2,3,\dots
+\]
+Substituting $v=n\hbar/(m_e r)$ into the force balance gives $Ze^2/(4\pi\varepsilon_0)=n^2\hbar^2/(m_e r)$, hence
+\begin{align}
+  r_n &= \frac{n^2}{Z}\,a_0, && a_0=\frac{4\pi\varepsilon_0\hbar^2}{m_e e^2}\approx0.529\ \text{\AA},\nonumber\\
+  v_n &= \frac{Z}{n}\,\alpha c, && \alpha=\frac{e^2}{4\pi\varepsilon_0\hbar c}\approx\frac{1}{137},\nonumber\\
+  E_n &= \tfrac12 m_e v_n^2-\frac{Ze^2}{4\pi\varepsilon_0 r_n}=-\frac{Z^2}{n^2}\,\frac{\alpha^2 m_e c^2}{2}
+       && \approx-13.6\ \text{eV}\cdot\frac{Z^2}{n^2},\nonumber\\
+  \omega_n &= \frac{v_n}{r_n}=\frac{Z^2}{n^3}\,\frac{\alpha c}{a_0}, && T_n=\frac{2\pi}{\omega_n}=\frac{n^3}{Z^2}\,T_1,\quad T_1\approx1.52\times10^{-16}\ \text{s}.
+  \label{eq:bohr}
+\end{align}
+The orbits are concentric circles whose radius grow like $n^2$, and the outer electrons are slower ($v\propto1/n$) and turn much more slowly
+($\omega\propto1/n^3$).
+
+\paragraph{Shells and their occupation.} Shell $n$ (K, L, M, N for $n=1..4$) can hold at most $2n^2$ electrons: in the quantum-mechanical
+refinement of the model a shell contains the subshells $l=0,\dots,n-1$, each with $2l+1$ orbitals of two spin states, and
+$\sum_{l=0}^{n-1}2(2l+1)=2n^2$ (Pauli principle). The table of \code{AtomData.cpp} stores, for each element, the number of electrons in each shell,
+for instance, the electrons of all subshells with the same $n$ (Table~\ref{tab:elements}). Shells do not always fill in order: potassium and calcium
+place electrons in $n=4$ while the M shell holds only 8 of its 18 electrons, because the $4s$ subshell lies below $3d$ (Madelung $n+l$ rule). For example:
+iron is $[\text{Ar}]\,3d^6 4s^2\to(2,8,14,2)$ and copper $[\text{Ar}]\,3d^{10}4s^1\to(2,8,18,1)$. The tests check
+$\sum_k n_k=Z$ and $n_k\le2k^2$ for every element.
+
+\begin{table}[H]
+\centering\small
+\begin{tabular}{@{}lrl@{\qquad}lrl@{\qquad}lrl@{}}
+\toprule
+El. & $Z$ & shells & El. & $Z$ & shells & El. & $Z$ & shells\\
+\midrule
+H  & 1  & 1       & Ne & 10 & 2, 8       & Cl & 17 & 2, 8, 7\\
+He & 2  & 2       & Na & 11 & 2, 8, 1    & Ar & 18 & 2, 8, 8\\
+Li & 3  & 2, 1    & Mg & 12 & 2, 8, 2    & K  & 19 & 2, 8, 8, 1\\
+Be & 4  & 2, 2    & Al & 13 & 2, 8, 3    & Ca & 20 & 2, 8, 8, 2\\
+B  & 5  & 2, 3    & Si & 14 & 2, 8, 4    & Fe & 26 & 2, 8, 14, 2\\
+C  & 6  & 2, 4    & P  & 15 & 2, 8, 5    & Cu & 29 & 2, 8, 18, 1\\
+N  & 7  & 2, 5    & S  & 16 & 2, 8, 6    & Zn & 30 & 2, 8, 18, 2\\
+O  & 8  & 2, 6    &    &    &            &    &    & \\
+F  & 9  & 2, 7    &    &    &            &    &    & \\
+\midrule
+\multicolumn{9}{@{}l}{capacity $2n^2$: K 2, L 8, M 18, N 32}\\
+\bottomrule
+\end{tabular}
+\caption{The 23 elements and their shell occupation (electrons in K, L, M, N).}
+\label{tab:elements}
+\end{table}
+
+\subsubsection{Mitigating from the physical model to the visual model}\label{sec:bohrvis}
+
+Equations \eqref{eq:bohr} cannot be drawn literally. With $r_n\propto n^2$ the N shell is 16 times larger than the K shell: at the zoom
+where the N shell fits in the window the K shell would be a few pixels wide. With $\omega_n\propto n^{-3}$ an N electron needs 64 times longer
+than a K electron for one revolution . And the real period, $T_1\approx1.5\times10^{-16}$~s,
+must in any case be slowed down by about $2.6\times10^{16}$. The visual model keeps the qualitative laws (larger and slower outer shells) but
+compresses their range:
+\[
+  r_k = 0.1\,k^2+0.6\,k+0.5 \quad(k=1,\dots,4):\qquad r_k=1.2,\ 2.1,\ 3.2,\ 4.5 ,
+\]
+still a quadratic in $k$, like Bohr's, but dominated by its linear term ($r_4/r_1=3.75$ instead of 16), with a spacing
+$r_{k+1}-r_k\ge0.9$ much larger than the electron diameter $2\rho_e=0.2$. The angular speeds $\omega_k=90,60,45,35^\circ$/s decrease
+with $k$, but the linear speeds $v_k=\omega_k r_k$ are almost equal, so that every electron visibly moves (Table~\ref{tab:shells}).
+
+\begin{table}[H]
+\centering\small
+\begin{tabular}{@{}lccccccc@{}}
+\toprule
+Shell $k$ & K (1) & L (2) & M (3) & N (4) & O (5) & P (6) & Q (7)\\
+\midrule
+Capacity $2k^2$              & 2   & 8   & 18  & 32  & 50  & 72  & 98\\
+Radius $r_k$ (world units)   & 1.2 & 2.1 & 3.2 & 4.5 & 5.9 & 7.4 & 9.0\\
+Bohr ratio $r_k/r_1=k^2$     & 1   & 4   & 9   & 16  & 25  & 36  & 49\\
+Visual ratio $r_k/r_1$       & 1   & 1.75& 2.67& 3.75& 4.92& 6.17& 7.50\\
+Tilt $\tau_k$ (deg)          & 0   & 25  & 40  & 15  & 45  & 70  & 30\\
+Angular speed $\omega_k$ (deg/s) & 90 & 60 & 45 & 35 & 28 & 22 & 18\\
+Linear speed $v_k=\omega_k r_k$ (units/s) & 1.88 & 2.20 & 2.51 & 2.75 & 2.88 & 2.84 & 2.83\\
+Apparent ring ratio $|\cos(\tau_k+30^\circ)|$ & 0.87 & 0.57 & 0.34 & 0.71 & 0.26 & 0.17 & 0.50\\
+\bottomrule
+\end{tabular}
+\caption{Layout of the shells (as in \code{BohrModel.cpp}), the last row is derived in Section~\ref{sec:kin}. Other visual constants:
+nucleus radius $\rho_N=0.45$, electron radius $\rho_e=0.1$, ring tube radius $\rho=0.03$.}
+\label{tab:shells}
+\end{table}
+
+\subsubsection{Scene graph of an atom}
+
+When an element is selected, \code{BohrAtom::build()} reads its \code{AtomInfo} and builds the tree of Figure~\ref{fig:sg2}a:
+
+\begin{center}
+\small
+\begin{tabularx}{\textwidth}{@{}lX@{}}
+\toprule
+\textbf{Node} & \textbf{Purpose}\\
+\midrule
+\code{root} (SceneNode) & identity transform, groups everything\\
+
+\quad\code{nucleus} & shared sphere, scale $\rho_N=0.45$, diffuse = CPK color of the element, shininess 128\\
+
+\quad\code{ShellPivot}$_k$ & static rotation $R_x(\tau_k)$: tilts the plane of shell $k$\\
+
+\quad\code{ring}$_k$ & torus $k$ (major radius $r_k$, tube $\rho=0.03$), identity transform, gray-blue diffuse\\
+
+\quad\code{OrbitNode}$_{k,e}$ & rotation $R_z(\theta_{k,e}(t))$ about the local $Z$ axis (normal of the ring plane), animated\\
+
+\quad\code{electron}$_{k,e}$ & shared sphere, $T(r_k,0,0)\,S(\rho_e)$, yellow diffuse\\
+
+\bottomrule
+\end{tabularx}
+\end{center}
+
+Because the ring and the orbit pivots of a shell are children of the same \code{ShellPivot}, they share its tilted frame; inside that frame
+the ring lies in the $XY$ plane and the orbit pivots rotate about $Z$, which is why the electrons travel exactly along the ring
+(Proposition~\ref{prop:onring}).
+
+\subsubsection{Electron kinematics}\label{sec:kin}
+
+Composing the local matrices from the root to electron $e$ ($e=0,\dots,n_k-1$) of shell $k$ gives the centre of the electron sphere:
+\begin{gather}
+  \mathbf c_{k,e}(t)=R_x(\tau_k)\,R_z(\theta)\,T(r_k,0,0)\,\mathbf 0
+  = r_k\begin{pmatrix}\cos\theta\\ \cos\tau_k\sin\theta\\ \sin\tau_k\sin\theta\end{pmatrix},\nonumber\\
+  \theta=\theta_{k,e}(t)=\frac{360^\circ e}{n_k}+s\,\omega_k t
+  \label{eq:electron}
+\end{gather}
+(angles taken modulo $360^\circ$), where $s$ is the speed multiplier of the GUI (indeed $R_z(\theta)(r,0,0)^T=r(\cos\theta,\sin\theta,0)^T$ and $R_x(\tau)(x,y,0)^T=(x,\,y\cos\tau,\,y\sin\tau)^T$).
+The initial phases $360^\circ e/n_k$ spread the electrons of a shell evenly.
+
+\begin{proposition}[electrons stay on their ring]\label{prop:onring}
+For every $t$, $\|\mathbf c_{k,e}(t)\|=r_k$ and $\mathbf c_{k,e}(t)\cdot\mathbf n_k=0$ with $\mathbf n_k=R_x(\tau_k)\hat{\mathbf z}=(0,-\sin\tau_k,\cos\tau_k)$.
+Hence every electron of shell $k$ moves on the circle $\{\mathbf x:\|\mathbf x\|=r_k,\ \mathbf x\cdot\mathbf n_k=0\}$, which is the centre circle of ring~$k$.
+\end{proposition}
+\noindent\textit{Proof.} $R_x$ and $R_z$ are isometries, so $\|\mathbf c\|=\|(r_k,0,0)\|=r_k$. From~\eqref{eq:electron},
+$\mathbf c\cdot\mathbf n_k=r_k\sin\theta\,(-\cos\tau_k\sin\tau_k+\sin\tau_k\cos\tau_k)=0$. The ring is the torus generated in the $XY$ plane with
+centre circle $\{\|\mathbf x\|=r_k,\ x_3=0\}$, transformed by the same $R_x(\tau_k)$, which maps the plane $x_3=0$ to the plane $\mathbf x\cdot\mathbf n_k=0$. 
+
+\begin{proposition}[no overlaps]\label{prop:nooverlap}
+For all elements of Table~\ref{tab:elements} and all $t$: (a)~two electrons of different shells are at least $0.9$ apart;
+(b)~two electrons of shell $k$ are at least $2r_k\sin(\pi/n_k)\ge1.11$ apart; (c)~every electron is at distance $r_k\ge1.2$ from the
+centre. Since $2\rho_e=0.2$ and $\rho_N+\rho_e=0.55$, electron spheres never intersect each other or the nucleus.
+\end{proposition}
+\noindent\textit{Proof.} (a)~By the reverse triangle inequality and Proposition~\ref{prop:onring},
+$\|\mathbf c-\mathbf c'\|\ge\bigl|\|\mathbf c\|-\|\mathbf c'\|\bigr|=|r_k-r_{k'}|\ge0.9$. \\
+(b)~All electrons of a shell share $\omega_k$, so their phase differences stay equal to $360^\circ m/n_k$, $m\ne0$; two points of a circle of radius
+$r$ separated by the angle $\Delta$ are at the chord distance $2r\sin(\Delta/2)\ge2r\sin(\pi/n_k)$. The smallest value over the 23 elements is
+the full M shell of Cu and Zn: $2\cdot3.2\cdot\sin10^\circ=1.11$ (L shell, $n=8$: $1.61$; M shell of Fe, $n=14$: $1.42$). (c)~follows from
+Proposition~\ref{prop:onring}. \hfill$\square$
+
+\paragraph{Time integration.} Each \code{OrbitNode} adds $s\,\omega_k\,\Delta t$ to its angle every frame, with $\Delta t$ measured by
+\code{glfwGetTime}. For a constant angular speed this explicit update is exact (the increments sum to $s\,\omega_k t$), so the motion does not
+depend on the frame rate. Taking the angle modulo $360^\circ$ keeps it in $[0,360)$, where a 32-bit float has a resolution of about
+$3\times10^{-5}$ degrees; without the modulo the angle would reach $3.2\times10^5$ degrees after one hour, with a resolution of only $0.03^\circ$.
+Moving the \emph{Speed} slider changes $\omega$ of all orbit nodes in place, so the electrons keep their phases. The rotation axis of an
+orbit node is set when it is created, so an atom built while the animation is paused is drawn correctly too.
+
+\paragraph{Apparent shape of the rings.} At these distances the projection is close to orthographic, so ring $k$ appears as an ellipse whose
+axis ratio is the cosine of the angle between its normal and the viewing direction, $b/a=|\mathbf n_k\cdot\hat{\mathbf v}|$. In the default view
+$\hat{\mathbf v}=-(0,\tfrac12,\tfrac{\sqrt3}{2})$, so $b/a=\bigl|\tfrac12\sin\tau_k-\tfrac{\sqrt3}{2}\cos\tau_k\bigr|=|\cos(\tau_k+30^\circ)|$:
+$0.87$, $0.57$, $0.34$ and $0.71$ for K, L, M and N (Table~\ref{tab:shells}). The four rings appear as clearly different ellipses, none of
+them edge-on (which would hide the electrons of a full shell behind each other), and this gives the atom its three-dimensional look even in a
+still image. (The tilt of the M shell was lowered from $55^\circ$ to $40^\circ$ for this reason: $|\cos85^\circ|=0.09$.)
+
+\subsubsection{Orbital rings: torus geometry}
+
+Ring $k$ is the torus with major radius $R=r_k$ and tube radius $\rho$,
+\begin{align*}
+  \mathbf p(\vartheta,\phi)&=\bigl((R+\rho\cos\phi)\cos\vartheta,\ (R+\rho\cos\phi)\sin\vartheta,\ \rho\sin\phi\bigr),\\
+  \mathbf n(\vartheta,\phi)&=(\cos\phi\cos\vartheta,\ \cos\phi\sin\vartheta,\ \sin\phi)=\frac{\mathbf p-R(\cos\vartheta,\sin\vartheta,0)}{\rho},
+\end{align*}
+sampled at $\vartheta_i=2\pi i/M$, $\phi_j=2\pi j/m$ ($i=0..M$, $j=0..m$, vertex index $i(m+1)+j$). The quad between $a=(i,j)$ and $b=(i{+}1,j)$
+is split into $(a,b,a{+}1)$ and $(b,b{+}1,a{+}1)$. Since
+$\partial_\vartheta\mathbf p\times\partial_\phi\mathbf p=\rho\,(R+\rho\cos\phi)\,\mathbf n$ with $R+\rho\cos\phi>0$, these triangles are
+counter-clockwise when seen from outside, as required by back-face culling. $V=(M+1)(m+1)$, $I=6Mm$; with $M=128$, $m=8$: $V=1161$, $I=6144$.
+
+\begin{lemma}
+A uniform scaling by $\sigma$ maps the torus $(R,\rho)$ to the torus $(\sigma R,\sigma\rho)$.
+\end{lemma}
+\noindent This is immediate from the parametrisation, and it is the reason for having one torus per shell. Scaling a single unit torus to
+the radius of each shell, as the previous version did with $\rho=0.025$, gives tubes of radius $0.025\,r_k=0.030,\ 0.053,\ 0.080,\ 0.1125$:
+the N ring was thicker than an electron ($\rho_e=0.1$), whose sphere, centred on the centre circle, was then entirely inside the tube and
+invisible (K, Ca, Fe, Cu, Zn), and the M electrons barely showed. Now seven tori with $R=r_k$ and the same $\rho=0.03<\rho_e$ are built once at
+start-up, and the ring nodes are not scaled (the tests check $\det A=1$ for every ring).
+
+\paragraph{Polygonal error.} The $M$-gon deviates from the true circle by at most the sagitta
+$\delta=r\bigl(1-\cos(\pi/M)\bigr)\approx\pi^2 r/(2M^2)$: $3.6\times10^{-4}$ for the K ring and $1.4\times10^{-3}$ for the N ring, much smaller
+than $\rho$, so an electron (which moves on the exact circle) always appears centred in its ring.
+
+\subsubsection{Example: carbon}
+
+Carbon ($Z=6$, shells $(2,4)$) has 18 nodes. At $t=0$ and with $s=1$, Equation~\eqref{eq:electron} gives:
+
+\begin{center}
+\small
+\begin{tabular}{@{}lcccl@{}}
+\toprule
+Shell & $r_k$ & $\tau_k$ & $\omega_k$ & electron centres at $t=0$ \quad$\to$\quad electron $e=0$ at $t=1$~s\\
+\midrule
+K & 1.2 & $0^\circ$  & $90^\circ$/s & $(\pm1.2,0,0)$ \quad$\to$\quad $(0,1.2,0)$\\
+L & 2.1 & $25^\circ$ & $60^\circ$/s & $(\pm2.1,0,0)$, $\pm(0,1.903,0.888)$ \quad$\to$\quad $(1.050,1.648,0.769)$\\
+\bottomrule
+\end{tabular}
+\end{center}
+
+% ------------------------------------------------------------------ 2.4
+\subsection{Visualizing Molecules: Ball-and-Stick Model}\label{sec:ballstick}
+
+\subsubsection{Molecule data}
+
+Eight molecules are predefined in \code{AtomData.cpp} for the ball-and-stick model~\cite{ballstick}, with experimental equilibrium geometries and the experimental wavenumber of their
+symmetric stretching vibration (used in Section~\ref{sec:anim2}). Each \code{MoleculeSpec} stores the atoms (element symbol and position in
+{\AA}) and the bonds (two atom indices and the bond order).
+
+\begin{table}[H]
+\centering\small
+\resizebox{\textwidth}{!}{%
+\begin{tabular}{@{}llllcccc@{}}
+\toprule
+\textbf{Molecule} & \textbf{Shape} & \textbf{Group} & \textbf{Bonds} & $d$ ({\AA}) & \textbf{Angle} & $\tilde\nu_1$ (cm$^{-1}$) & $\nu_1$ \textbf{active in}\\
+\midrule
+H$_2$O  & bent                & $C_{2v}$      & 2 single & 0.957  & $104.5^\circ$  & 3657 & IR, Raman\\
+CO$_2$  & linear              & $D_{\infty h}$& 2 double & 1.160  & $180^\circ$    & 1333 & Raman\\
+NH$_3$  & trigonal pyramidal  & $C_{3v}$      & 3 single & 1.012  & $106.7^\circ$  & 3337 & IR, Raman\\
+CH$_4$  & tetrahedral         & $T_d$         & 4 single & 1.087  & $109.47^\circ$ & 2917 & Raman\\
+O$_2$   & linear              & $D_{\infty h}$& 1 double & 1.2075 & ---            & 1556 & Raman\\
+N$_2$   & linear              & $D_{\infty h}$& 1 triple & 1.0977 & ---            & 2330 & Raman\\
+HCl     & linear              & $C_{\infty v}$& 1 single & 1.2746 & ---            & 2886 & IR, Raman\\
+NaCl    & linear (ion pair)   & $C_{\infty v}$& 1 (drawn)& 2.361  & ---            & 366  & IR, Raman\\
+\bottomrule
+\end{tabular}}
+\caption{Predefined molecules: bond length $d$, bond angle and the symmetric stretch $\nu_1$ (gas phase). NaCl is ionic; its ``bond'' is drawn
+to show the ion pair.}
+\label{tab:molecules}
+\end{table}
+
+The coordinates follow from $d$ and the bond angle $\vartheta$ in closed form (central atom at the origin):
+\begin{itemize}
+  \item \textbf{Bent AX$_2$} (H$_2$O, in the $XY$ plane): $\mathbf X_{1,2}=\bigl(\pm d\sin\tfrac\vartheta2,\ d\cos\tfrac\vartheta2,\ 0\bigr)=(\pm0.757,\,0.586,\,0)$.
+  \item \textbf{Pyramidal AX$_3$} (NH$_3$, threefold axis $Y$): $\mathbf X_j=(\varrho\cos120^\circ j,\ -h,\ \varrho\sin120^\circ j)$, $j=0,1,2$.
+        The three H atoms form an equilateral triangle of side $\varrho\sqrt3$, and the law of cosines in the triangle $X_iAX_j$ gives
+        $3\varrho^2=2d^2(1-\cos\vartheta)$, so
+        $\varrho=d\sqrt{\tfrac23(1-\cos\vartheta)}=0.9373$ and $h=\sqrt{d^2-\varrho^2}=0.3815$ for $d=1.012$, $\vartheta=106.67^\circ$.
+        (The ammonia data of the previous version was not a pyramid: its N--H lengths were $1.049$, $1.049$ and $0.933$~{\AA} and one H--N--H
+        angle was $127^\circ$.)
+  \item \textbf{Tetrahedral AX$_4$} (CH$_4$): $\mathbf X=a(\pm1,\pm1,\pm1)$ with an even number of minus signs, $a=d/\sqrt3=0.628$;
+        $\cos\vartheta=\mathbf X_i\cdot\mathbf X_j/d^2=-a^2/(3a^2)=-\tfrac13$, i.e.\ $\vartheta=\arccos(-\tfrac13)=109.47^\circ$.
+  \item \textbf{Linear}: $(\pm d,0,0)$ around the central atom (CO$_2$) or $(\pm d/2,0,0)$ for a diatomic.
+\end{itemize}
+
+\subsubsection{Normalisation: centre of mass and similarity scaling}\label{sec:norm}
+
+Molecules have very different sizes (NaCl is $2.4$~{\AA} long, N$_2$ $1.1$~{\AA}), so \code{MoleculeScene::build} maps every molecule
+into the same sphere of radius $R_{\text{fit}}=2.2$ world units. With the standard atomic weights $m_i$ and covalent radii $r_i$:
+\begin{equation}
+  \mathbf c=\frac{\sum_i m_i\mathbf p_i}{\sum_i m_i},\qquad
+  s=\frac{R_{\text{fit}}}{\max_i\bigl(\|\mathbf p_i-\mathbf c\|+\kappa r_i\bigr)},\qquad
+  \mathbf x_i^0=s\,(\mathbf p_i-\mathbf c),\qquad \rho_i=s\,\kappa\,r_i,
+  \label{eq:norm}
+\end{equation}
+with $\kappa=\tfrac12$; every bond radius is multiplied by $s$ as well.
+
+\begin{proposition}\label{prop:similar}
+The map $\Phi(\mathbf p)=s(\mathbf p-\mathbf c)$ is a similarity: $\|\Phi(\mathbf p)-\Phi(\mathbf q)\|=s\|\mathbf p-\mathbf q\|$ and all angles are preserved.
+Since the radii are scaled by the same $s$, the rendered model is an exact scaled copy of the model in {\AA}ngstr\"om, its centre of mass is the
+origin, and $\max_i(\|\mathbf x_i^0\|+\rho_i)=R_{\text{fit}}$: the farthest ball touches the fit sphere, which the camera framing keeps in view.
+\end{proposition}
+\noindent\textit{Proof.} $\Phi(\mathbf p)-\Phi(\mathbf q)=s(\mathbf p-\mathbf q)$, a positive multiple, which preserves ratios of lengths and angles;
+$\sum_i m_i\mathbf x_i^0=s\bigl(\sum_i m_i\mathbf p_i-\mathbf c\sum_i m_i\bigr)=\mathbf 0$; the last identity is the definition of $s$. \hfill$\square$
+
+Centring on the centre of mass (rather than on an arbitrary atom) is what a free molecule does: it rotates and vibrates about its centre of mass
+(Section~\ref{sec:anim2}). For water the centre of mass is $(0,0.0656,0)$~{\AA}, almost on the oxygen ($m_{\text O}/m_{\text H}\approx16$), and
+$s=2.049$: oxygen ball $0.748$, hydrogen ball $0.318$, O--H distance $1.961$ world units. The scale factors of the eight molecules are
+$2.05$ (H$_2$O), $1.44$ (CO$_2$), $1.92$ (NH$_3$), $1.77$ (CH$_4$), $2.27$ (O$_2$), $2.38$ (N$_2$), $1.58$ (HCl) and $1.00$ (NaCl).
+
+\paragraph{Why $\kappa=\tfrac12$.} Covalent radii are approximately additive, $d_{ij}\approx r_i+r_j$. Balls of radius $\kappa r$ then cover
+$\kappa(r_i+r_j)\approx\kappa\,d_{ij}$ of every bond, and the visible part of each stick is about $(1-\kappa)\,d_{ij}=d_{ij}/2$: the balls never
+touch (as they would in a space-filling model, $\kappa\ge1$) and the sticks do not dominate. The previous version scaled the positions but not
+the radii, so the ball / stick proportions changed from one molecule to the other.
+
+\subsubsection{Bond cylinders}\label{sec:bondcyl}
+
+\paragraph{Mesh.} The shared cylinder has radius $\tfrac12$, height $1$ and axis $Y$. With $N=32$ segments and $a_i=2\pi i/N$ it has a side
+ring of $2(N+1)$ vertices (bottom $b_i$ at index $2i$, top $t_i$ at $2i+1$, normal $(\cos a_i,0,\sin a_i)$), two cap centres and $2(N+1)$ cap-rim
+vertices with normals $\pm\hat{\mathbf y}$: $V=4N+6=134$, $T=4N=128$, $I=12N=384$. The side quads are split into $(b_i,t_i,b_{i+1})$ and
+$(t_i,t_{i+1},b_{i+1})$, for which
+\[
+  (\mathbf t_i-\mathbf b_i)\times(\mathbf b_{i+1}-\mathbf b_i)=(0,h,0)\times(\Delta x,0,\Delta z)=h\,(\Delta z,0,-\Delta x)
+  \approx h\,r\,\Delta a\,(\cos a_i,0,\sin a_i),
+\]
+an outward vector: the triangles are counter-clockwise from outside (the caps likewise). The previous version used $(b_i,b_{i+1},t_i)$,
+whose normal points inwards; with back-face culling the near half of every bond was discarded and the far half was drawn with normals pointing
+away from the viewer, so the bonds were dull and had no highlight.
+
+\paragraph{Placement.} For a strand from $\mathbf a$ to $\mathbf b$ let $\ell=\|\mathbf b-\mathbf a\|$, $\hat{\mathbf d}=(\mathbf b-\mathbf a)/\ell$,
+$\mathbf m=(\mathbf a+\mathbf b)/2$ and
+\begin{equation}
+  M_{\text{bond}}=T(\mathbf m)\,R(\hat{\mathbf a},\theta)\,S(2\rho_b,\ \ell,\ 2\rho_b),\qquad
+  \hat{\mathbf a}=\frac{\hat{\mathbf y}\times\hat{\mathbf d}}{\|\hat{\mathbf y}\times\hat{\mathbf d}\|},\qquad
+  \theta=\operatorname{atan2}\bigl(\|\hat{\mathbf y}\times\hat{\mathbf d}\|,\ \hat{\mathbf y}\cdot\hat{\mathbf d}\bigr).
+  \label{eq:bond}
+\end{equation}
+
+\begin{proposition}\label{prop:bond}
+$M_{\text{bond}}(0,-\tfrac12,0)=\mathbf a$, $M_{\text{bond}}(0,\tfrac12,0)=\mathbf b$, and the transformed cylinder has radius $\rho_b$.
+\end{proposition}
+\noindent\textit{Proof.} $S(0,\pm\tfrac12,0)=(0,\pm\tfrac\ell2,0)$. Write $\hat{\mathbf d}=\cos\theta\,\hat{\mathbf y}+\sin\theta\,\hat{\mathbf w}$ with
+$\hat{\mathbf w}\perp\hat{\mathbf y}$ a unit vector and $\theta\in[0,\pi]$; this is possible and consistent with~\eqref{eq:bond} because
+$\hat{\mathbf y}\cdot\hat{\mathbf d}=\cos\theta$ and $\|\hat{\mathbf y}\times\hat{\mathbf d}\|=\sin\theta$. Then
+$\hat{\mathbf y}\times\hat{\mathbf d}=\sin\theta\,(\hat{\mathbf y}\times\hat{\mathbf w})$, so $\hat{\mathbf a}=\hat{\mathbf y}\times\hat{\mathbf w}$, which is
+perpendicular to $\hat{\mathbf y}$. Rodrigues' formula~\eqref{eq:rodrigues} with $\hat{\mathbf a}\cdot\hat{\mathbf y}=0$ and
+$\hat{\mathbf a}\times\hat{\mathbf y}=(\hat{\mathbf y}\times\hat{\mathbf w})\times\hat{\mathbf y}=\hat{\mathbf w}(\hat{\mathbf y}\cdot\hat{\mathbf y})-\hat{\mathbf y}(\hat{\mathbf w}\cdot\hat{\mathbf y})=\hat{\mathbf w}$
+gives $R\hat{\mathbf y}=\cos\theta\,\hat{\mathbf y}+\sin\theta\,\hat{\mathbf w}=\hat{\mathbf d}$. Hence
+$M_{\text{bond}}(0,\pm\tfrac12,0)=\mathbf m\pm\tfrac\ell2\hat{\mathbf d}$, which are $\mathbf b$ and $\mathbf a$. The scale maps the circle of radius
+$\tfrac12$ in the $XZ$ plane to radius $\rho_b$, and $R$ and $T$ preserve distances. \hfill$\square$
+
+When $\hat{\mathbf y}\times\hat{\mathbf d}=\mathbf 0$ the axis is undefined: $\hat{\mathbf d}=\hat{\mathbf y}$ needs no rotation and
+$\hat{\mathbf d}=-\hat{\mathbf y}$ needs a half turn about any axis perpendicular to $\hat{\mathbf y}$ (the code uses $\hat{\mathbf x}$).
+$\operatorname{atan2}$ is preferred to $\arccos(\hat{\mathbf y}\cdot\hat{\mathbf d})$ because $\arccos'(x)=-1/\sqrt{1-x^2}$ diverges at $x=\pm1$:
+near-vertical bonds would turn a rounding error $\varepsilon$ of the dot product into an angle error of order $\sqrt{2\varepsilon}$, whereas
+$\operatorname{atan2}$ uses both the sine and the cosine and is well-conditioned for every direction.
+
+\paragraph{Remark: the previous implementation.} The previous version built $R$ with \code{glm::rotate} and then recovered the axis--angle pair from
+the matrix, $\theta=\arccos\frac{\operatorname{tr}R-1}{2}$ and $\hat{\mathbf a}=\frac{1}{2\sin\theta}(R_{32}-R_{23},\,R_{13}-R_{31},\,R_{21}-R_{12})$,
+which is correct because $R-R^{T}=2\sin\theta\,[\hat{\mathbf a}]_\times$ by~\eqref{eq:rodrigues}. But GLM stores matrices column-major
+(\code{m[col][row]}) and the entries were read as \code{m[row][col]}, which yields $-\hat{\mathbf a}$, i.e.\ the rotation $R^{T}=R^{-1}$. Since
+$R^{T}\hat{\mathbf y}$ is the mirror image $(-d_x,d_y,-d_z)$ of $\hat{\mathbf d}$, the bonds of H$_2$O, NH$_3$ and CH$_4$ crossed the molecule instead
+of joining the atoms (bonds along the $X$ axis happened to look right, $(\mp1,0,0)$ and $(\pm1,0,0)$ being the same line). The current code stores
+$(\hat{\mathbf a},\theta)$ of~\eqref{eq:bond} directly, and Proposition~\ref{prop:bond} is checked for 300 random directions and all degenerate ones.
+
+\subsubsection{Multiple bonds}
+
+The strands of a double or triple bond are parallel copies of the bond shifted along
+\[
+  \hat{\mathbf u}=\frac{\hat{\mathbf d}\times\hat{\mathbf z}}{\|\hat{\mathbf d}\times\hat{\mathbf z}\|}
+  \qquad\Bigl(\text{or }\frac{\hat{\mathbf d}\times\hat{\mathbf x}}{\|\hat{\mathbf d}\times\hat{\mathbf x}\|}\text{ if }\|\hat{\mathbf d}\times\hat{\mathbf z}\|<0.1\Bigr),
+\]
+a unit vector perpendicular to the bond and to $Z$: in the default view (camera on $+Z$) the strands lie side by side on the screen, as in a
+structural formula, and for the planar molecules of the $XY$ plane they lie in the molecular plane. A double bond has two strands at
+$\pm\delta_2\hat{\mathbf u}$, a triple bond three coplanar strands at $0,\pm\delta_3\hat{\mathbf u}$, all of radius $\rho_m$ (in {\AA}, before scaling):
+\begin{center}
+\small
+\begin{tabularx}{\textwidth}{@{}lccX@{}}
+\toprule
+ & radius & offset & conditions (all lengths multiplied by $s$)\\
+\midrule
+single & $\rho_1=0.07$ & $0$ & inside the smallest ball: $\rho_1<\kappa r_{\text H}=0.155$\\
+double & $\rho_m=0.04$ & $\pm\delta_2=\pm0.07$ & strands apart: $2\delta_2=0.14>2\rho_m=0.08$\\
+triple & $\rho_m=0.04$ & $0,\ \pm\delta_3=\pm0.11$ & strands apart: $\delta_3=0.11>2\rho_m$; ends hidden in the balls: $\delta_3+\rho_m=0.15<\kappa r_{\text O}=0.365$\\
+\bottomrule
+\end{tabularx}
+\end{center}
+The previous version shifted the strands along $\hat{\mathbf d}\times\hat{\mathbf y}$, which for bonds along $X$ is $\pm Z$, the viewing direction:
+the two strands of CO$_2$ were drawn one behind the other and the third strand of N$_2$ was put on the perpendicular axis; a double bond along $Y$
+even produced NaN (a zero vector was normalised before the fallback test).
+
+\subsubsection{Configuring atom types and positions}\label{sec:editor}
+
+Selecting a molecule copies its \code{MoleculeSpec} into a working copy which the editor of the control panel modifies:
+\begin{itemize}
+  \item every atom has an element selector (the 23 elements) and a position field $(x,y,z)$ in {\AA} that can be dragged or typed, and a
+        button to remove it (its bonds are removed and the other bonds renumbered); \emph{Add atom} appends a hydrogen atom $1$~{\AA} beyond the
+        atom with the largest $x$;
+  \item every bond has an order slider (1--3) and a remove button; \emph{Add bond} joins two atom indices (validated: in range, distinct, not already bonded);
+  \item \emph{Auto bonds} replaces the bond list by the result of the detection below; \emph{Reset} restores the preset.
+\end{itemize}
+Every change marks the scene dirty and it is rebuilt in the next frame ($O(n+B)$ nodes), so the centre of mass, the scale~\eqref{eq:norm} and the
+bond cylinders are recomputed; the formula shown becomes the Hill formula of the current atoms (C and H first, then alphabetical) followed by
+``(edited)'', and the experimental wavenumber of the preset is discarded.
+
+\paragraph{Automatic bond detection.} Atoms $i<j$ are bonded if
+\[
+  \|\mathbf p_i-\mathbf p_j\|\le\tau\,(r_i+r_j),\qquad \tau=1.2,
+\]
+the additivity of covalent radii with a 20\,\% tolerance, tested for all $\binom n2$ pairs. For water, O--H: $0.957\le1.2(0.73+0.31)=1.248$ (bonded)
+while H$\cdots$H: $1.514>1.2\cdot0.62=0.744$ (not bonded); for NaCl, $2.361\le3.036$. On the eight presets the detection finds exactly their bonds
+(tested). The bond order cannot be inferred from distances alone and is set by the user.
+
+\paragraph{Geometry read-out.} The panel lists, for the current atoms, every bond length $\ell_{ij}=\|\mathbf p_i-\mathbf p_j\|$ and every bond angle
+at an atom $j$ shared by two bonds $(i,j)$ and $(j,k)$,
+\[
+  \vartheta_{ijk}=\arccos\frac{(\mathbf p_i-\mathbf p_j)\cdot(\mathbf p_k-\mathbf p_j)}{\|\mathbf p_i-\mathbf p_j\|\,\|\mathbf p_k-\mathbf p_j\|},
+\]
+with the argument clamped to $[-1,1]$ against rounding. For example, turning water into hydrogen sulfide (O$\to$S and the H atoms moved to
+$(\pm0.962,\,0.927,\,0)$) shows S--H $=1.336$~{\AA} and H--S--H $=92.1^\circ$, the experimental values (Figure~\ref{fig:p2edit}).
+
+% ------------------------------------------------------------------ 2.5
+\subsection{Animation (Optional)}\label{sec:anim2}
+
+The three animations are driven by $\Delta t$ from the GLFW timer and live at different levels of the scene graph, so they compose without
+interfering.
+
+\subsubsection{Electron motion}
+Section~\ref{sec:kin}: each \code{OrbitNode} turns its electron about the normal of the ring plane at $s\,\omega_k$; \emph{Animate Electrons}
+pauses / resumes all of them and \emph{Speed} sets $s\in[0.1,5]$.
+
+\subsubsection{Molecular vibration: physical background}
+
+Near the equilibrium geometry $\mathbf x^0\in\mathbb R^{3n}$ the potential energy is approximately quadratic,
+$U(\mathbf x^0+\boldsymbol\xi)\approx U_0+\tfrac12\boldsymbol\xi^{T}H\boldsymbol\xi$ ($\nabla U=\mathbf 0$ at equilibrium, $H$ the Hessian),
+and Newton's law gives $\mathsf M\ddot{\boldsymbol\xi}=-H\boldsymbol\xi$ with $\mathsf M=\operatorname{diag}(m_1I_3,\dots,m_nI_3)$. Solutions
+$\boldsymbol\xi=\mathbf q\cos(\omega t+\varphi)$ exist when
+\[
+  H\mathbf q=\omega^2\mathsf M\mathbf q
+  \quad\Longleftrightarrow\quad
+  \bigl(\mathsf M^{-1/2}H\mathsf M^{-1/2}\bigr)\tilde{\mathbf q}=\omega^2\tilde{\mathbf q},\qquad \tilde{\mathbf q}=\mathsf M^{1/2}\mathbf q,
+\]
+a symmetric eigenvalue problem whose eigenvectors are the \emph{normal modes}~\cite{wilson,molvib}. Three translations and three rotations (two for a
+linear molecule) cost no energy and have $\omega=0$, leaving $3n-6$ vibrations ($3n-5$ if linear): 3 for H$_2$O, 6 for NH$_3$, 9 for CH$_4$, 4 for CO$_2$
+and 1 for a diatomic molecule. For a diatomic molecule the problem reduces to one oscillator in the bond length with the reduced mass
+$\mu=m_1m_2/(m_1+m_2)$:
+\[
+  \mu\,\ddot x=-k\,x,\qquad \omega=\sqrt{k/\mu},\qquad \tilde\nu=\frac{\omega}{2\pi c}.
+\]
+For HCl, $\mu=0.980$~u and $\tilde\nu=2886$~cm$^{-1}$ give the force constant $k=\mu(2\pi c\tilde\nu)^2\approx481$~N/m. A mode absorbs infrared light
+only if it changes the dipole moment ($\partial\boldsymbol\mu/\partial q\ne\mathbf 0$)~\cite{ir}: the stretch of the homonuclear O$_2$ and N$_2$ and the
+symmetric stretches of CO$_2$ and CH$_4$ are IR-inactive and observed in Raman spectra instead (Table~\ref{tab:molecules}).
+
+\subsubsection{Implemented vibration: symmetric stretching}
+
+Every atom is wrapped in a \code{VibrationNode} that moves it on the line through the centre of mass, all atoms in phase:
+\begin{equation}
+  \mathbf x_i(t)=\lambda(t)\,\mathbf x_i^0,\qquad \lambda(t)=1+A\sin(2\pi f t),
+  \label{eq:breathing}
+\end{equation}
+with $\mathbf x_i^0$ from~\eqref{eq:norm} (relative to the centre of mass), the relative amplitude $A$ (default $0.08$, slider $0$--$0.25$) and the
+displayed frequency $f$.
+
+\begin{proposition}\label{prop:vib}
+For every molecule, the motion~\eqref{eq:breathing} (a)~keeps the centre of mass at the origin, (b)~has zero total linear momentum,
+(c)~has zero total angular momentum, and (d)~multiplies every interatomic distance by $\lambda(t)$ while keeping every bond direction and every
+bond angle constant.
+\end{proposition}
+\noindent\textit{Proof.} (a)~$\sum_i m_i\mathbf x_i=\lambda\sum_i m_i\mathbf x_i^0=\mathbf 0$ by Proposition~\ref{prop:similar}.
+(b)~$\mathbf P=\sum_i m_i\dot{\mathbf x}_i=\dot\lambda\sum_i m_i\mathbf x_i^0=\mathbf 0$.
+(c)~$\mathbf L=\sum_i m_i\,\mathbf x_i\times\dot{\mathbf x}_i=\lambda\dot\lambda\sum_i m_i\,\mathbf x_i^0\times\mathbf x_i^0=\mathbf 0$.
+(d)~$\mathbf x_i-\mathbf x_j=\lambda(\mathbf x_i^0-\mathbf x_j^0)$ with $\lambda>0$. \hfill$\square$
+
+So the motion is purely internal --- no drift and no spurious rotation, properties shared by every normal mode. It is exactly the vibration of a
+diatomic molecule (the displacements are along the axis, with $\|\Delta\mathbf x_1\|/\|\Delta\mathbf x_2\|=m_2/m_1$: in HCl the hydrogen atom moves
+$35.2$ times more than the chlorine atom), and exactly the symmetric stretch $\nu_1$ of CO$_2$ (carbon at rest, the two oxygen atoms moving in
+opposite directions) and of CH$_4$ (carbon at rest, the four H atoms moving radially): these modes are the only ones of their symmetry species
+($\Sigma_g^+$, $A_1$), so symmetry alone fixes their pattern. Water and ammonia have two totally symmetric modes (stretch and bend), and their true
+$\nu_1$ contains a little bending; \eqref{eq:breathing} is its stretching part. Asymmetric and bending modes would require the eigen-decomposition
+above and are not implemented.
+
+\paragraph{Frequency.} The displayed frequency is proportional to the experimental wavenumber, $f=10^{-3}\tilde\nu_1$~Hz (times the \emph{Vib.\ speed}
+multiplier): $3.66$~Hz for water, $2.89$~Hz for HCl, $1.33$~Hz for CO$_2$, $0.37$~Hz for NaCl. Relative frequencies are therefore physical (light
+atoms and stiff bonds vibrate faster, $\omega=\sqrt{k/\mu}$); the real motion, at $c\tilde\nu$, is slowed down by $c\tilde\nu/f=3.0\times10^{13}$. An
+edited molecule, whose wavenumber is unknown, vibrates at 2~Hz.
+
+\paragraph{Bonds follow the atoms.} After the atoms have moved, every strand is placed again with~\eqref{eq:bond} between the current
+$\mathbf x_a$ and $\mathbf x_b$ (plus its sideways offset), so the sticks stretch and shrink with the vibration. The previous version moved each atom
+independently along $x$, $y$ or $z$ at different frequencies and left the bonds in place: the centre of mass moved, the molecule rotated and
+the atoms drifted away from their bonds.
+
+\subsubsection{Molecular rotation}
+
+The root \code{MolRotNode} applies $R_y(\omega_r t)$ with $\omega_r=30^\circ$/s about the vertical axis through the centre of mass (the origin after
+normalisation), the axis about which a free molecule rotates. Atom $i$ is drawn with
+\[
+  M_{\text{world},i}(t)=R_y(\omega_r t)\;T\bigl(\lambda(t)\,\mathbf x_i^0\bigr)\;S(\rho_i),
+\]
+and since $R_y(\lambda\mathbf x)=\lambda R_y\mathbf x$ (a rotation is linear), rotation and vibration commute: either can be switched on or off at
+any time. Bond strands are children of the same root, so they rotate with the atoms. Editing a molecule keeps its current rotation angle.
+
+% ------------------------------------------------------------------ 2.6
+\subsection{Rendering and Lighting}\label{sec:render2}
+
+\paragraph{Vertex format and meshes.} Each vertex has two attributes (24~bytes): \code{aPos} (location~0) and \code{aNormal} (location~1), both
+\code{vec3} in object space; no texture coordinates or vertex colors are needed because every node has a uniform material.
+
+\begin{center}
+\small
+\resizebox{\textwidth}{!}{%
+\begin{tabular}{@{}lllll@{}}
+\toprule
+\textbf{Mesh} & \textbf{Parameters} & $V$ & $I$ & \textbf{Used for}\\
+\midrule
+Sphere & 36 sectors $\times$ 18 stacks, radius 1 & $(S{+}1)(K{+}1)=703$ & $6S(K{-}1)=3672$ & nucleus, electrons, atoms\\
+Cylinder & 32 segments, radius $\tfrac12$, height 1 & $4N{+}6=134$ & $12N=384$ & bond strands\\
+Torus $\times7$ & $R=r_k$, $\rho=0.03$, $128\times8$ & $(M{+}1)(m{+}1)=1161$ & $6Mm=6144$ & orbital ring of shell $k$\\
+\bottomrule
+\end{tabular}}
+\end{center}
+The sphere counts are those of the UV sphere of Part~1 (Table~\ref{tab:counts}): the $S$ triangles touching each pole are degenerate and skipped.
+
+\paragraph{Shaders.} The vertex shader computes \code{FragPos = vec3(model * vec4(aPos, 1))}, \code{Normal = normalMatrix * aNormal} and
+\code{gl\_Position = projection * view * vec4(FragPos, 1)}; the fragment shader evaluates~\eqref{eq:phong2} per pixel.
+
+\begin{lstlisting}[language=GLSL,caption={Fragment shader core (phong.frag).}]
+vec3 ambient  = light.ambient * material.ambient;
+
+vec3 norm     = normalize(Normal);
+vec3 lightDir = normalize(light.position - FragPos);
+float diff    = max(dot(norm, lightDir), 0.0);
+vec3 diffuse  = light.diffuse * (diff * material.diffuse);
+
+vec3 viewDir    = normalize(viewPos - FragPos);
+vec3 reflectDir = reflect(-lightDir, norm);
+float spec      = diff > 0.0 ? pow(max(dot(viewDir, reflectDir), 0.0), material.shininess) : 0.0;
+vec3 specular   = light.specular * (spec * material.specular);
+
+FragColor = vec4(ambient + diffuse + specular, 1.0);
+\end{lstlisting}
+
+\paragraph{Materials.} Unlike Part~1, Part~2 uploads a full \code{Material} per node. The default light is at $(5,8,5)$ with ambient $0.15$,
+diffuse $1$ and specular $1$ (all editable in \emph{Lighting}).
+\begin{center}
+\small
+\begin{tabular}{@{}l cccc@{}}
+\toprule
+\textbf{Object} & \textbf{Ambient} & \textbf{Diffuse} & \textbf{Specular} & \textbf{Shininess}\\
+\midrule
+Nucleus     & $0.3 \times$ CPK color & CPK color       & $(0.8)^3$ & 128\\
+Electron    & $(0.3, 0.3, 0)$         & $(1, 1, 0)$ yellow & $(1)^3$ & 128\\
+Orbital ring& $(0.05)^3$              & $(0.3, 0.4, 0.5)$ & $(0.1)^3$ & 16\\
+Atom (molecule) & $0.25 \times$ CPK color & CPK color   & $(0.6)^3$ & 80\\
+Bond strand & $(0.15)^3$              & $(0.55, 0.55, 0.60)$ & $(0.4)^3$ & 32\\
+\bottomrule
+\end{tabular}
+\end{center}
+The nucleus and atom colors are the CPK colors of the Jmol scheme~\cite{cpk} (e.g.\ H white, C dark gray, N blue, O red, Cl green); the high
+shininess of the electrons gives them a small, sharp highlight, the low one of the rings a matte look.
+
+\paragraph{OpenGL state and wireframe.} Depth testing, back-face culling (\code{GL\_BACK}, which requires the counter-clockwise winding of
+Section~\ref{sec:bondcyl}), 4$\times$ MSAA and VSync are enabled; the background is $(0.05,0.07,0.12)$. In wireframe mode (\code{W}) every node's
+flag is set, the CPU switches \code{glPolygonMode} to \code{GL\_LINE} for its draw call and the shader outputs the unlit diffuse color, showing the
+triangulation of the spheres, cylinders and tori.
+
+% ------------------------------------------------------------------ 2.7
+\subsection{User Interface and User Instructions}\label{sec:gui2}
+
+\begin{verbatim}
+cd part2_molecules
+make -j4 && ./build/molecules     # or, from the top folder: make run2
+\end{verbatim}
+
+\paragraph{Control panel.} The panel is fixed in the top-left corner (310~px wide; it scrolls when it is taller than the window) and contains:
+\begin{itemize}
+  \item \textbf{FPS} and \textbf{View Mode}: radio buttons \emph{Bohr Atom Model} / \emph{Ball-and-Stick}; switching re-frames the camera.
+  \item \textbf{Bohr Atom Model}: element symbol field (type e.g.\ \code{Na} + Enter), list of the 23 elements sorted by $Z$, name and $Z$, and for every
+        shell its occupation, its capacity $2n^2$ and its radius; \emph{Animate Electrons} and \emph{Speed} ($0.1$--$5\times$).
+  \item \textbf{Ball-and-Stick Molecules}: list of the 8 molecules; formula, number of atoms and bonds, bond types; \emph{Geometry} (bond lengths
+        and angles); CPK color legend (one line per element); \emph{Edit atoms \& bonds} (Section~\ref{sec:editor}); \emph{Molecular Vibration}
+        with the wavenumber and the displayed frequency, \emph{Amplitude} and \emph{Vib.\ speed}; \emph{Molecular Rotation}.
+  \item \textbf{Rendering}: \emph{Wireframe (W)}. \textbf{Lighting}: light position, ambient / diffuse / specular colors.
+        \textbf{Camera}: yaw, pitch, field of view, distance, reset.
+  \item \textbf{Screenshot (F12)} with the option \emph{with GUI}, and the name of the last saved file.
+\end{itemize}
+
+\begin{center}
+\small
+\begin{tabular}{@{}ll@{}}
+\toprule
+\textbf{Input} & \textbf{Action}\\
+\midrule
+Left mouse drag & orbit the camera (yaw / pitch)\\
+Right mouse drag & pan (move the target)\\
+Mouse wheel & zoom (change the distance)\\
+\texttt{R} & reset and re-frame the camera\\
+\texttt{W} & toggle wireframe\\
+\texttt{F12} / \texttt{Shift+F12} & screenshot of the 3D view / of the whole window\\
+\texttt{Esc} & quit\\
+\bottomrule
+\end{tabular}
+\end{center}
+Screenshots are saved as \texttt{screenshot\_<time>.png} in the current folder. Mouse presses over the panel and keys typed into a text field (e.g.\ the \texttt{R} of ``Ar'') are not used by the camera.
+
+\paragraph{Screenshots.} \code{F12} reads the 3D viewport from the back buffer \emph{before} the GUI is drawn, \code{Shift+F12} (or the button with
+\emph{with GUI}) reads the whole window \emph{after} it; \code{glReadPixels} returns the rows bottom-up, so they are flipped while the PNG is written.
+\paragraph{Command line.} All figures of Section~\ref{sec:results2} were produced with commands such as
+\begin{verbatim}
+./build/molecules --element Na --screenshot fig.png
+./build/molecules --molecule H2O --with-gui --editor --screenshot f.png
+./build/molecules --molecule CO2 --amplitude 0.2 --time 0.1876 \
+                  --screenshot fig.png
+\end{verbatim}
+{\raggedright Options: \code{--element <symbol>}, \code{--molecule <formula>}, \code{--wireframe}, \code{--paused}, \code{--no-vibrate}, \code{--rotate},
+\code{--speed <s>}, \code{--amplitude <A>}, \code{--time <t>} (advance all animations by $t$ seconds), \code{--yaw}, \code{--pitch}, \code{--distance},
+\code{--light x,y,z}, \code{--editor}, \code{--screenshot <file.png>}, \code{--with-gui}, \code{--frames N}. With \code{--screenshot} the animations
+are frozen at time $t$, so the images are reproducible.\par}
+
+% ------------------------------------------------------------------ 2.8
+\subsection{Testing and Verification}\label{sec:test2}
+
+\code{make test} (in \code{part2\_molecules}, or at the top level for both parts) builds \code{tests/test\_part2.cpp}, which needs no window: the scenes
+are built with dummy meshes and only their transforms are inspected. It checks:
+\begin{itemize}
+  \item \textbf{meshes}: $V$ and $I$ equal the closed forms above, all indices are valid, all normals have unit length, every non-degenerate triangle is
+        counter-clockwise seen from outside ($(\mathbf b-\mathbf a)\times(\mathbf c-\mathbf a)\cdot(\mathbf n_a+\mathbf n_b+\mathbf n_c)>0$), and every torus vertex is
+        at distance $\rho$ from the centre circle;
+  \item \textbf{Bohr atoms} (all 23 elements): $\sum_k n_k=Z$ and $n_k\le2k^2$; at $t=0$, after several time steps, and for an atom built while paused,
+        every electron satisfies $\|\mathbf c\|=r_k$ and $\mathbf c\cdot\mathbf n_k=0$ (Proposition~\ref{prop:onring}), every ring is rigid and centred on its
+        orbit, the distances of Proposition~\ref{prop:nooverlap} hold, and one update turns each orbit by exactly $s\,\omega_k\,\Delta t$;
+  \item \textbf{molecules} (all 8): bond lengths and angles equal the reference values of Table~\ref{tab:molecules} ($\pm0.002$~{\AA}, $\pm0.1^\circ$);
+        bond detection finds exactly the preset bonds; positions are the similarity image~\eqref{eq:norm} and the fit radius is reached
+        (Proposition~\ref{prop:similar}); every strand joins its two atoms, with the right radius, a perpendicular offset and both ends inside the balls
+        (Proposition~\ref{prop:bond}); parallel strands do not touch; the normal matrix keeps normals perpendicular to the surface
+        (Proposition~\ref{prop:normal}); during the vibration the centre of mass stays at the origin and all positions are $\lambda(t)\mathbf x_i^0$
+        (Proposition~\ref{prop:vib}); with the rotation everything stays attached;
+  \item \textbf{bond placement} for 300 random segments and the degenerate directions $\pm\hat{\mathbf y}$.
+\end{itemize}
+All 13\,607 checks pass. As a control, re-introducing either defect of the previous version (clockwise cylinder triangles, or the transposed axis
+of the bond rotation) makes the corresponding checks fail.
+
+% ------------------------------------------------------------------ 2.9
+\subsection{Results}\label{sec:results2}
+
+All figures are screenshots of the application (default Phong lighting, default camera unless stated), produced with the commands of
+Section~\ref{sec:gui2}.
+
+\begin{figure}[H]
+\centering
+\pimg{fig_p2_gui_bohr.png}
+\caption{The interface in Bohr mode (carbon): control panel with the element list and the shell occupation (left), 3D view (right).}
+\label{fig:p2gui}
+\end{figure}
+
+\begin{figure}[H]
+\centering
+\begin{subfigure}{0.32\textwidth}\pimg{fig_p2_bohr_H.png}\caption{H $(1)$}\end{subfigure}\hfill
+\begin{subfigure}{0.32\textwidth}\pimg{fig_p2_bohr_C.png}\caption{C $(2,4)$}\end{subfigure}\hfill
+\begin{subfigure}{0.32\textwidth}\pimg{fig_p2_bohr_Ne.png}\caption{Ne $(2,8)$}\end{subfigure}\\[4pt]
+\begin{subfigure}{0.32\textwidth}\pimg{fig_p2_bohr_Na.png}\caption{Na $(2,8,1)$}\end{subfigure}\hfill
+\begin{subfigure}{0.32\textwidth}\pimg{fig_p2_bohr_Ca.png}\caption{Ca $(2,8,8,2)$}\end{subfigure}\hfill
+\begin{subfigure}{0.32\textwidth}\pimg{fig_p2_bohr_Cu.png}\caption{Cu $(2,8,18,1)$}\end{subfigure}
+\caption{Bohr models with one to four shells. The nucleus has the CPK color of the element; each shell is a tilted ring with its electrons evenly
+spaced; the rings appear as ellipses of different axis ratios (Section~\ref{sec:kin}).}
+\label{fig:p2bohr}
+\end{figure}
+
+\begin{figure}[H]
+\centering
+\begin{subfigure}{0.32\textwidth}\pimg{fig_p2_orbit_t0.png}\caption{$t=0$}\end{subfigure}\hfill
+\begin{subfigure}{0.32\textwidth}\pimg{fig_p2_orbit_t1.png}\caption{$t=0.5$~s}\end{subfigure}\hfill
+\begin{subfigure}{0.32\textwidth}\pimg{fig_p2_orbit_t2.png}\caption{$t=1$~s}\end{subfigure}
+\caption{Electron motion (sodium): in one second the K, L and M electrons turn by $90^\circ$, $60^\circ$ and $45^\circ$ along their rings.}
+\label{fig:p2orbit}
+\end{figure}
+
+\begin{figure}[H]
+\centering
+\begin{subfigure}{0.24\textwidth}\pimg{fig_p2_mol_H2O.png}\caption{H$_2$O}\end{subfigure}\hfill
+\begin{subfigure}{0.24\textwidth}\pimg{fig_p2_mol_CO2.png}\caption{CO$_2$ (double)}\end{subfigure}\hfill
+\begin{subfigure}{0.24\textwidth}\pimg{fig_p2_mol_NH3.png}\caption{NH$_3$}\end{subfigure}\hfill
+\begin{subfigure}{0.24\textwidth}\pimg{fig_p2_mol_CH4.png}\caption{CH$_4$}\end{subfigure}\\[4pt]
+\begin{subfigure}{0.24\textwidth}\pimg{fig_p2_mol_O2.png}\caption{O$_2$ (double)}\end{subfigure}\hfill
+\begin{subfigure}{0.24\textwidth}\pimg{fig_p2_mol_N2.png}\caption{N$_2$ (triple)}\end{subfigure}\hfill
+\begin{subfigure}{0.24\textwidth}\pimg{fig_p2_mol_HCl.png}\caption{HCl}\end{subfigure}\hfill
+\begin{subfigure}{0.24\textwidth}\pimg{fig_p2_mol_NaCl.png}\caption{NaCl}\end{subfigure}
+\caption{The eight ball-and-stick molecules: CPK-colored balls proportional to the covalent radii, bonds of one, two or three strands.}
+\label{fig:p2mols}
+\end{figure}
+
+\begin{figure}[H]
+\centering
+\begin{subfigure}{0.49\textwidth}\pimg{fig_p2_gui_mol.png}\caption{Water: geometry read-out and editor}\end{subfigure}\hfill
+\begin{subfigure}{0.49\textwidth}\pimg{fig_p2_edit_h2s.png}\caption{Edited into H$_2$S: S--H 1.336~{\AA}, $92.1^\circ$}\end{subfigure}
+\caption{Configuration of atom types and positions (Section~\ref{sec:editor}).}
+\label{fig:p2edit}
+\end{figure}
+
+\begin{figure}[H]
+\centering
+\begin{subfigure}{0.24\textwidth}\pimg{fig_p2_vib_co2_max.png}\caption{CO$_2$, $\lambda=1.2$}\end{subfigure}\hfill
+\begin{subfigure}{0.24\textwidth}\pimg{fig_p2_vib_co2_min.png}\caption{CO$_2$, $\lambda=0.8$}\end{subfigure}\hfill
+\begin{subfigure}{0.24\textwidth}\pimg{fig_p2_vib_hcl_max.png}\caption{HCl, $\lambda=1.2$}\end{subfigure}\hfill
+\begin{subfigure}{0.24\textwidth}\pimg{fig_p2_vib_hcl_min.png}\caption{HCl, $\lambda=0.8$}\end{subfigure}
+\caption{Symmetric stretching with $A=0.2$ at a quarter and three quarters of a period: the carbon of CO$_2$ and, almost, the chlorine of HCl stay
+at rest (centre of mass), the bonds stretch with the atoms (Proposition~\ref{prop:vib}).}
+\label{fig:p2vib}
+\end{figure}
+
+\begin{figure}[H]
+\centering
+\begin{subfigure}{0.32\textwidth}\pimg{fig_p2_rot_0.png}\caption{$t=0$}\end{subfigure}\hfill
+\begin{subfigure}{0.32\textwidth}\pimg{fig_p2_rot_1.png}\caption{$t=1$~s ($30^\circ$)}\end{subfigure}\hfill
+\begin{subfigure}{0.32\textwidth}\pimg{fig_p2_rot_2.png}\caption{$t=2$~s ($60^\circ$)}\end{subfigure}
+\caption{Rotation of methane about the vertical axis through its centre of mass.}
+\label{fig:p2rot}
+\end{figure}
+
+\begin{figure}[H]
+\centering
+\begin{subfigure}{0.24\textwidth}\pimg{fig_p2_cam_front.png}\caption{default view}\end{subfigure}\hfill
+\begin{subfigure}{0.24\textwidth}\pimg{fig_p2_cam_side.png}\caption{side ($\psi=0$, $\varphi=0$)}\end{subfigure}\hfill
+\begin{subfigure}{0.24\textwidth}\pimg{fig_p2_cam_top.png}\caption{top ($\varphi=89^\circ$)}\end{subfigure}\hfill
+\begin{subfigure}{0.24\textwidth}\pimg{fig_p2_cam_zoom.png}\caption{zoom ($d=3.5$)}\end{subfigure}
+\caption{Camera control on ammonia: the side view shows the pyramid, the top view (along the threefold axis) the $120^\circ$ symmetry of the H atoms.}
+\label{fig:p2cam}
+\end{figure}
+
+\begin{figure}[H]
+\centering
+\begin{subfigure}{0.24\textwidth}\pimg{fig_p2_wire_bohr.png}\caption{Na, wireframe}\end{subfigure}\hfill
+\begin{subfigure}{0.24\textwidth}\pimg{fig_p2_wire_mol.png}\caption{CH$_4$, wireframe}\end{subfigure}\hfill
+\begin{subfigure}{0.24\textwidth}\pimg{fig_p2_light_a.png}\caption{light $(5,8,5)$}\end{subfigure}\hfill
+\begin{subfigure}{0.24\textwidth}\pimg{fig_p2_light_b.png}\caption{light $(-10,-2,4)$}\end{subfigure}
+\caption{Wireframe mode (triangulation of the shared meshes) and the effect of the light position on the Phong shading.}
+\label{fig:p2wire}
+\end{figure}
+
+% ------------------------------------------------------------------ 2.10
+\subsection{Limitations}\label{sec:lim2}
+
+\begin{itemize}
+  \item Bohr's model is semi-classical: electrons do not move on circles but occupy orbitals (probability clouds), and the model is quantitatively
+        valid only for one-electron atoms. The rings, their tilts and the compressed radii and speeds are a visual convention
+        (Section~\ref{sec:bohrvis}), not to scale. Only 23 elements are in the table (up to four shells).
+  \item Molecules come from 8 presets that the editor can modify; there is no import of molecular files (\code{.xyz}, \code{.mol}) and no saving of
+        edited molecules. Bond orders are not inferred. The molecule is re-centred and re-scaled after every edit, so it may appear to change size while
+        an atom is dragged.
+  \item Geometries are fixed experimental values; there is no force field or geometry optimisation. The vibration is the symmetric stretch only (exact
+        for diatomics, CO$_2$ and CH$_4$, approximate for H$_2$O and NH$_3$); bending and asymmetric modes would need the normal-mode analysis of
+        Section~\ref{sec:anim2}.
+  \item Atom labels are not drawn in the 3D view; the CPK legend and the geometry read-out of the panel identify the atoms.
+\end{itemize}
+
+
+% ------------------------------------------------------------------ 2.8
+\subsection{Limitations}\label{sec:lim2}
+
+\begin{itemize}
+  \item Only 23 elements are included in the look-up table; elements beyond Zn are not available. The molecule list is fixed at compile time (8 molecules); the user cannot define new molecules at runtime.
+  \item Bohr's model is a simplification: in reality electrons do not orbit in fixed circular paths but occupy probability clouds (orbitals). The tilted-ring visualization is a pedagogical convention, not a physical representation.
+  \item Bond lengths and angles are hard-coded from approximate experimental data; no force-field relaxation or geometry optimization is performed.
+  \item The ball-and-stick model uses the molecule mode that is currently commented out in the GUI radio buttons (the code is complete but the UI toggle to switch to it is disabled in the delivered version). Users would need to uncomment the radio button in \code{main.cpp} (lines~187--191) to enable it.
+  \item There is no screenshot function in Part~2 (unlike Part~1 which uses \code{stb\_image\_write}). Screenshots must be taken with an external tool.
+  \item The vibration animation is a simplified sinusoidal oscillation along a single axis per atom, not a physically accurate normal-mode analysis.
+  \item Atom labels (element symbols displayed next to each sphere) are not rendered; the CPK color legend in the GUI is the only way to identify atoms.
+\end{itemize}
+
 
 % ------------------------------------------------------------------ conclusion
 \section{Conclusion}\label{sec:conclusion}
@@ -954,17 +1972,25 @@ the two parts are independent programs that reuse the same graphics infrastructu
 \subsection{Part 1}
 Part~1 draws all required 2D and 3D shapes, a user-defined surface and imported \code{.obj} / \code{.ply} models; supports the five render modes
 (flat, Gouraud, Phong, texture, wireframe); lets the user translate, rotate and scale every object and navigate with mouse and keyboard; and is organised in small modules of which the geometry,
-parsing and loading parts are independent from OpenGL and tested automatically.
+parsing and loading parts are independent from OpenGL.
 
 \subsection{Part 2}
+Part 2 visualizes atoms with Bohr's model (23 elements, one tilted ring per shell, electrons that provably stay on their rings and never overlap)
+and molecules with the ball-and-stick model (8 molecules with experimental geometry, CPK colors, balls proportional to the covalent radii, bonds of
+one to three strands placed by an exact axis--angle construction). It lets the user configure the element of the atom and the type and position of
+every atom of a molecule, with automatic bond detection and a geometry read-out. It animates the electron motion, a symmetric stretching vibration
+that conserves the centre of mass and the momenta, and a rotation about the centre of mass, and it frames the camera automatically and saves
+screenshots. The scene graph composes all transformations, the meshes are shared, every node has its own material under per-fragment Phong
+lighting.
+
 
 \section{Source Code}
-\url{https://github.com/<account>/<repository>} (folders \code{part1\_shapes}, \code{part2\_molecules} and \code{common}).
+\url{https://github.com/myphuong0309/261-computer-graphics-assignment1} (folders \code{part1\_shapes}, \code{part2\_molecules} and \code{common}).
 
 
 % REFERENCES
 \pagebreak
-\begin{thebibliography}{9}
+\begin{thebibliography}{99}
 \addcontentsline{toc}{section}{References}
 \bibitem{opengl33} M.~Segal and K.~Akeley, \emph{The OpenGL Graphics System: A Specification, Version 3.3 (Core Profile)}, Khronos Group.
 \bibitem{phong} B.~T.~Phong, ``Illumination for Computer Generated Pictures,'' \emph{Communications of the ACM}, vol.~18, no.~6, pp.~311--317, 1975.
@@ -974,6 +2000,13 @@ parsing and loading parts are independent from OpenGL and tested automatically.
 \bibitem{glm} G-Truc Creation, OpenGL Mathematics (GLM). \url{https://github.com/g-truc/glm}
 \bibitem{imgui} O.~Cornut, Dear ImGui -- bloat-free graphical user interface for C++. \url{https://github.com/ocornut/imgui}
 \bibitem{stb} S.~Barrett, stb single-file public domain libraries (\code{stb\_image}, \code{stb\_image\_write}). \url{https://github.com/nothings/stb}
+\bibitem{bohr} N.~Bohr, ``On the Constitution of Atoms and Molecules,'' \emph{Philosophical Magazine}, Series~6, vol.~26, no.~151, pp.~1--25, 1913.
+\bibitem{bohrwiki} Wikipedia, \emph{Bohr model}. \url{https://en.wikipedia.org/wiki/Bohr_model}
+\bibitem{ballstick} Wikipedia, \emph{Ball-and-stick model}. \url{https://en.wikipedia.org/wiki/Ball-and-stick_model}
+\bibitem{wilson} E.~B.~Wilson, J.~C.~Decius and P.~C.~Cross, \emph{Molecular Vibrations: The Theory of Infrared and Raman Vibrational Spectra}, McGraw-Hill, 1955 (Dover reprint, 1980).
+\bibitem{molvib} Wikipedia, \emph{Molecular vibration}. \url{https://en.wikipedia.org/wiki/Molecular_vibration}
+\bibitem{ir} Wikipedia, \emph{Infrared spectroscopy}. \url{https://en.wikipedia.org/wiki/Infrared_spectroscopy}
+\bibitem{cpk} Jmol, \emph{Jmol Colors} (CPK color scheme). \url{https://jmol.sourceforge.net/jscolors/}
 \end{thebibliography}
 
 \end{document}

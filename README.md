@@ -26,7 +26,7 @@ No other dependency is needed.
 ```bash
 make            # build both parts            (make part1 / make part2 for one part)
 make run1       # run Part 1                  (make run2: Part 2)
-make test       # unit tests of both parts (no GPU needed)
+make test       # Part 2 unit tests (no GPU needed)
 make clean      # remove the build output of both parts
 ```
 
@@ -56,7 +56,7 @@ translate / rotate / scale editing and five render modes.
 | Gouraud vertex-color interpolation | render mode *Gouraud* (per-vertex lighting of per-vertex colors; rainbow or 2-color gradient) |
 | Phong shading (per-fragment lighting) | render mode *Phong* |
 | Texture mapping with a user image | render mode *Texture* (png/jpg/bmp/tga; pick from `assets/textures` or type a path) |
-| Wireframe (edges only) | render mode *Wireframe* - real edges, not the triangulation |
+| Wireframe | render mode *Wireframe* - every triangle edge of the mesh, drawn as lines |
 
 Extras: several objects per scene (select / duplicate / delete), yellow selection box, ground grid + axes,
 configurable light, screenshot (`F12`), demo scene (*Scene ▸ Load demo scene*).
@@ -104,7 +104,6 @@ part1_shapes/
 ├── shaders/shapes.vert, shapes.frag    one program, `mode` uniform selects the render mode
 ├── assets/textures, assets/models      sample images / models
 ├── vendor/stb/                         stb_image.h, stb_image_write.h
-├── tests/test_core.cpp                 `make test`
 └── Makefile
 ```
 
@@ -117,7 +116,7 @@ Model matrix: `M = T · Rz · Ry · Rx · S` (shown live in Inspector ▸ Transf
 Part 1 uses `Shader` and `Camera` from `common/`; the sphere / cylinder / torus generation loops and the Phong shader were
 adapted from Part 2 (Part 2's `Mesh` stores only position + normal, so it cannot carry the UVs / vertex colors needed here).
 
-## Command-line options (for screenshots / testing)
+## Command-line options (for screenshots)
 
 ```
 ./build/shapes --demo                         # all shapes

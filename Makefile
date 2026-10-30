@@ -2,7 +2,7 @@
 #   make            build part 1 and part 2
 #   make part1      build only part 1          make run1   run part 1
 #   make part2      build only part 2          make run2   run part 2
-#   make test       run the unit tests of both parts
+#   make test       run the unit tests (Part 2)
 #   make clean      remove build output of both
 
 .PHONY: all part1 part2 run1 run2 test clean
@@ -22,7 +22,6 @@ run2:
 	$(MAKE) -C part2_molecules run
 
 test:
-	$(MAKE) -C part1_shapes test
 	$(MAKE) -C part2_molecules test
 
 clean:

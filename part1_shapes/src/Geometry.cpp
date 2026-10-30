@@ -6,6 +6,7 @@
 #include <array>
 #include <cmath>
 #include <map>
+#include <set>
 
 #ifndef M_PI
 #define M_PI 3.14159265358979323846
@@ -127,8 +128,8 @@ MeshData star(int points, float outerR, float innerRatio) {
 }
 
 MeshData arrow() {
-    // The arrow is concave, so it is triangulated by hand with shared vertices
-    // (so that the shaft/head seam is recognised as an interior edge in wireframe).
+    // The arrow is concave, so a fan from the centre would leave the shape: it is triangulated
+    // by hand (shaft = 2 triangles, head = 3 triangles sharing the shaft's right-hand vertices).
     const glm::vec3 nz(0.0f, 0.0f, 1.0f);
     const glm::vec2 pts[7] = {
         {-0.5f, -0.15f},  // 0 A  shaft bottom-left
@@ -400,39 +401,25 @@ void planarUV(MeshData& m) {
 }
 
 void buildWireIndices(MeshData& m) {
-    struct EdgeInfo {
-        unsigned i0 = 0, i1 = 0;   // original vertex indices of the first occurrence
-        int count = 0;
-        glm::vec3 n0{0.0f};
-        bool sharp = false;
-    };
+    // Every edge of every triangle, each drawn once. Vertices duplicated at the same position
+    // (cube corners, texture seams) share a canonical id so their common edge is not drawn twice.
     std::vector<unsigned> cid = canonicalIds(m);
-    std::map<std::pair<unsigned, unsigned>, EdgeInfo> edges;
+    std::set<std::pair<unsigned, unsigned>> seen;
+    m.wireIndices.clear();
 
     for (size_t t = 0; t + 2 < m.indices.size(); t += 3) {
         const unsigned tri[3] = {m.indices[t], m.indices[t + 1], m.indices[t + 2]};
         glm::vec3 n = glm::cross(m.vertices[tri[1]].position - m.vertices[tri[0]].position,
                                  m.vertices[tri[2]].position - m.vertices[tri[0]].position);
-        float len = glm::length(n);
-        if (len < 1e-12f) continue;   // degenerate (e.g. sphere poles, cone apex)
-        n /= len;
+        if (glm::length(n) < 1e-12f) continue;   // degenerate (e.g. sphere poles, cone apex)
 
         for (int e = 0; e < 3; ++e) {
             unsigned u = tri[e], v = tri[(e + 1) % 3];
             unsigned cu = cid[u], cv = cid[v];
             if (cu == cv) continue;
-            EdgeInfo& info = edges[{std::min(cu, cv), std::max(cu, cv)}];
-            if (info.count == 0) { info.i0 = u; info.i1 = v; info.n0 = n; }
-            else if (std::fabs(glm::dot(info.n0, n)) < 0.99999f) info.sharp = true;
-            ++info.count;
-        }
-    }
-    m.wireIndices.clear();
-    for (const auto& kv : edges) {
-        const EdgeInfo& e = kv.second;
-        if (e.count == 1 || e.count > 2 || e.sharp) {
-            m.wireIndices.push_back(e.i0);
-            m.wireIndices.push_back(e.i1);
+            if (!seen.insert({std::min(cu, cv), std::max(cu, cv)}).second) continue;
+            m.wireIndices.push_back(u);
+            m.wireIndices.push_back(v);
         }
     }
 }
